@@ -10,7 +10,7 @@ from app.models.user import User
 from app.services.auth_service import decode_jwt_token
 
 
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
 
 def get_db() -> Session:
@@ -25,12 +25,18 @@ def get_db() -> Session:
 
 
 def get_current_user(
-    credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
     db: Annotated[Session, Depends(get_db)],
 ) -> User:
     """
     Extract and validate JWT token and return current user.
     """
+    if credentials is None or credentials.scheme.lower() != "bearer" or not credentials.credentials:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials.",
+        )
+
     token = credentials.credentials
 
     try:
@@ -40,13 +46,13 @@ def get_current_user(
         if user_id is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid authentication token",
+                detail="Could not validate credentials.",
             )
 
     except AuthenticationError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
+            detail="Could not validate credentials.",
         )
 
     user = db.get(User, user_id)
@@ -54,7 +60,7 @@ def get_current_user(
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found",
+            detail="Could not validate credentials.",
         )
 
     return user

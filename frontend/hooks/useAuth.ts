@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { apiRequest, ApiError } from "@/lib/api";
+import { apiRequest } from "@/lib/api";
 import { clearAccessToken, getAccessToken, setAccessToken } from "@/lib/auth";
 
 export interface CurrentUser {
@@ -51,12 +51,8 @@ export function useAuth(): AuthState {
       });
 
       setUser(currentUser);
-    } catch (error) {
-      if (error instanceof ApiError && error.status === 401) {
-        logout();
-      } else {
-        setUser(null);
-      }
+    } catch (_error) {
+      logout();
     } finally {
       setIsLoading(false);
     }

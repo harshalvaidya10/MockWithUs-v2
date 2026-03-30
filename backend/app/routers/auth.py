@@ -44,11 +44,14 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)) -> SignupRespo
             detail="Email already registered",
         )
 
+    token = create_access_token(str(user.id))
+
     return SignupResponse(
         id=user.id,
         email=user.email,
         full_name=user.full_name,
         created_at=user.created_at,
+        access_token=token,
     )
 
 

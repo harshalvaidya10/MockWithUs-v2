@@ -38,6 +38,8 @@ class SignupResponse(BaseModel):
     email: EmailStr
     full_name: str | None
     created_at: datetime
+    access_token: str
+    token_type: Literal["bearer"] = "bearer"
 
 
 class CurrentUserResponse(BaseModel):
