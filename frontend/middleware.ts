@@ -13,7 +13,8 @@ export function middleware(request: NextRequest): NextResponse {
       const loginUrl = request.nextUrl.clone();
       loginUrl.pathname = "/login";
       loginUrl.search = "";
-      loginUrl.searchParams.set("next", pathname);
+      const target = `${request.nextUrl.pathname}${request.nextUrl.search}`;
+      loginUrl.searchParams.set("next", target);
       return NextResponse.redirect(loginUrl);
     }
   }

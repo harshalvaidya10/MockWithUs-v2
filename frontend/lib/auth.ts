@@ -40,17 +40,14 @@ export function getAccessToken(): string | null {
     return null;
   }
 
-  const localStorageToken = window.localStorage.getItem(TOKEN_KEY);
-  if (localStorageToken) {
-    return localStorageToken;
-  }
-
   const cookieToken = readAccessTokenCookie();
   if (cookieToken) {
     window.localStorage.setItem(TOKEN_KEY, cookieToken);
+    return cookieToken;
   }
 
-  return cookieToken;
+  window.localStorage.removeItem(TOKEN_KEY);
+  return null;
 }
 
 export function setAccessToken(token: string): void {
