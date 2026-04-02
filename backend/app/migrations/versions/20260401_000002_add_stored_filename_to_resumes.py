@@ -17,9 +17,19 @@ def upgrade() -> None:
 
     op.add_column(
         "resumes",
-        sa.Column("stored_filename", sa.String(length=255), nullable=False, server_default=""),
+        sa.Column("stored_filename", sa.String(length=255), nullable=True),
     )
-    op.alter_column("resumes", "stored_filename", server_default=None)
+    op.execute(
+        """
+        UPDATE resumes
+        SET stored_filename = (
+            gen_random_uuid()::text ||
+            COALESCE(SUBSTRING(filename FROM '\\.[^.]+$'), '')
+        )
+        WHERE stored_filename IS NULL OR BTRIM(stored_filename) = '';
+        """
+    )
+    op.alter_column("resumes", "stored_filename", nullable=False)
 
 
 def downgrade() -> None:
