@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import { apiRequest, ApiError } from "@/lib/api";
 import { setAccessToken } from "@/lib/auth";
@@ -13,12 +13,27 @@ interface LoginResponse {
 
 export default function LoginPage(): JSX.Element {
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  function getSafeRedirectPath(): string {
+    const nextPath = searchParams.get("next");
+    if (!nextPath) {
+      return "/dashboard";
+    }
+
+    // Prevent external/open redirects; allow only app-internal absolute paths.
+    if (!nextPath.startsWith("/") || nextPath.startsWith("//")) {
+      return "/dashboard";
+    }
+
+    return nextPath;
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -35,7 +50,7 @@ export default function LoginPage(): JSX.Element {
       });
 
       setAccessToken(response.access_token);
-      router.push("/dashboard");
+      router.push(getSafeRedirectPath());
       router.refresh();
     } catch (error) {
       if (error instanceof ApiError) {

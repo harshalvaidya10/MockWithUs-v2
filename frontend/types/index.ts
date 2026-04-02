@@ -48,3 +48,10 @@ export interface Evaluation {
   improvements: string[];
   created_at: string;
 }
+
+export interface ResumeUploadResponse {
+  id: string;
+  filename: string;
+  skills: string[];
+  created_at: string;
+}

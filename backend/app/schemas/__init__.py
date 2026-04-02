@@ -9,7 +9,7 @@ from app.schemas.auth import (
 )
 from app.schemas.evaluation import EvalOut, FeedbackOut
 from app.schemas.interview import QuestionOut, SessionCreate, SessionOut
-from app.schemas.resume import ResumeOut
+from app.schemas.resume import ResumeOut, ResumeUploadResponse
 
 __all__ = [
     "EvalOut",
@@ -18,6 +18,7 @@ __all__ = [
     "LoginRequest",
     "QuestionOut",
     "ResumeOut",
+    "ResumeUploadResponse",
     "SessionCreate",
     "SessionOut",
     "SignupRequest",
