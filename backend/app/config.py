@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     groq_api_key: str | None = Field(default=None, alias="GROQ_API_KEY")
 
     upload_dir: str = Field(default="/app/uploads", alias="UPLOAD_DIR")
+    max_upload_size_mb: int = Field(default=5, alias="MAX_UPLOAD_SIZE_MB")
     cors_origins: List[str] = Field(default_factory=lambda: ["http://localhost:3000"], alias="CORS_ORIGINS")
 
     model_config = SettingsConfigDict(

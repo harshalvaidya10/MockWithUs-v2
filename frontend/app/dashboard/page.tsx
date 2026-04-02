@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { useAuth } from "@/hooks/useAuth";
@@ -87,6 +88,12 @@ export default function DashboardPage(): JSX.Element {
             Frontend auth is now connected to the backend. Next step is building the
             resume upload and interview setup flow.
           </p>
+          <Link
+            href="/interview/new"
+            className="mt-4 inline-block rounded-xl bg-white px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-slate-200"
+          >
+            Upload Resume
+          </Link>
         </div>
       </div>
     </main>

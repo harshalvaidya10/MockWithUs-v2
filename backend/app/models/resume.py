@@ -19,6 +19,7 @@ class Resume(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    stored_filename: Mapped[str] = mapped_column(String(255), nullable=False)
     parsed_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
     skills: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False, default=list)
     experience: Mapped[str | None] = mapped_column(Text, nullable=True)
