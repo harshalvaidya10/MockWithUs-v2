@@ -30,3 +30,4 @@ class ResumeUploadResponse(BaseModel):
     filename: str
     skills: list[str]
     created_at: datetime
+    is_resume_like: bool = True

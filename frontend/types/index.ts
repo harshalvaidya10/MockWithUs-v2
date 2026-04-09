@@ -54,4 +54,32 @@ export interface ResumeUploadResponse {
   filename: string;
   skills: string[];
   created_at: string;
+  is_resume_like?: boolean;
+}
+
+export interface JobOut {
+  id: string;
+  title: string | null;
+  company: string | null;
+  keywords: string[];
+  required_skills: string[];
+  created_at: string;
+}
+
+export interface JobDetailOut extends JobOut {
+  content: string;
+}
+
+export interface SkillGap {
+  matched: string[];
+  missing: string[];
+  coverage: number;
+}
+
+export interface MatchResult {
+  match_score: number;
+  skill_gaps: SkillGap;
+  match_summary: string;
+  resume_id: string;
+  job_id: string;
 }

@@ -6,7 +6,13 @@ const AUTH_COOKIE_NAME = "mockwithus_access_token";
 export function middleware(request: NextRequest): NextResponse {
   const { pathname } = request.nextUrl;
 
-  if (pathname.startsWith("/dashboard") || pathname.startsWith("/interview")) {
+  const isProtectedPath =
+    pathname.startsWith("/dashboard") ||
+    pathname.startsWith("/interview") ||
+    pathname.startsWith("/jobs") ||
+    pathname.startsWith("/resumes");
+
+  if (isProtectedPath) {
     const token = request.cookies.get(AUTH_COOKIE_NAME)?.value;
 
     if (!token) {
@@ -23,5 +29,5 @@ export function middleware(request: NextRequest): NextResponse {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/interview/:path*"],
+  matcher: ["/dashboard/:path*", "/interview/:path*", "/jobs/:path*", "/resumes/:path*"],
 };

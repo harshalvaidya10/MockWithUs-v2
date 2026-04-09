@@ -4,8 +4,9 @@ import asyncio
 import logging
 import uuid
 from pathlib import Path
+from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -14,7 +15,7 @@ from app.models.resume import Resume
 from app.models.user import User
 from app.schemas.resume import ResumeUploadResponse
 from app.services.embedding_service import generate_embedding
-from app.services.resume_parser import parse_resume_file
+from app.services.resume_parser import assess_resume_document, parse_resume_file
 
 
 logger = logging.getLogger(__name__)
@@ -82,6 +83,14 @@ async def upload_resume(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Could not extract text from the uploaded file.",
             )
+
+        is_resume_like, rejection_reason = await asyncio.to_thread(
+            assess_resume_document,
+            parsed_text,
+            original_filename,
+        )
+        if not is_resume_like:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=rejection_reason)
     except HTTPException:
         if stored_file_path.exists():
             stored_file_path.unlink()
@@ -141,4 +150,95 @@ async def upload_resume(
         filename=resume.filename,
         skills=resume.skills,
         created_at=resume.created_at,
+        is_resume_like=True,
     )
+
+
+@router.get("/", response_model=list[ResumeUploadResponse])
+async def list_resumes(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> list[ResumeUploadResponse]:
+    """Return all uploaded documents for the authenticated user, newest first.
+
+    Each item includes an `is_resume_like` flag so clients can decide whether
+    it should be selectable for matching while still allowing cleanup/deletion
+    of legacy non-resume uploads.
+    """
+    resumes = (
+        db.query(Resume)
+        .filter(Resume.user_id == current_user.id)
+        .order_by(Resume.created_at.desc())
+        .all()
+    )
+
+    response_payload: list[ResumeUploadResponse] = []
+    for resume in resumes:
+        is_resume_like, _ = assess_resume_document(
+            resume.parsed_text or "",
+            resume.filename,
+        )
+        if not is_resume_like:
+            logger.info(
+                "Resume list includes a non-resume-like upload.",
+                extra={"resume_id": str(resume.id), "user_id": str(current_user.id)},
+            )
+        response_payload.append(
+            ResumeUploadResponse(
+                id=resume.id,
+                filename=resume.filename,
+                skills=resume.skills,
+                created_at=resume.created_at,
+                is_resume_like=is_resume_like,
+            )
+        )
+
+    return response_payload
+
+
+@router.delete(
+    "/{resume_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+)
+async def delete_resume(
+    resume_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Delete a resume owned by the authenticated user."""
+    resume = (
+        db.query(Resume)
+        .filter(Resume.id == resume_id, Resume.user_id == current_user.id)
+        .first()
+    )
+    if resume is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resume not found.")
+
+    stored_file_path = Path(settings.upload_dir) / resume.stored_filename
+
+    try:
+        db.delete(resume)
+        db.commit()
+        logger.info(
+            "Deleted resume successfully.",
+            extra={"resume_id": str(resume_id), "user_id": str(current_user.id)},
+        )
+    except Exception as exc:
+        db.rollback()
+        logger.exception("Failed to delete resume %s for user %s", resume_id, current_user.id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not delete the resume.",
+        ) from exc
+
+    try:
+        stored_file_path.unlink(missing_ok=True)
+    except Exception:
+        logger.warning(
+            "Resume file could not be removed from disk after DB deletion.",
+            extra={"resume_id": str(resume_id), "path": str(stored_file_path)},
+            exc_info=True,
+        )
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

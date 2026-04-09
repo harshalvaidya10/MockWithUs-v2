@@ -82,18 +82,48 @@ export default function DashboardPage(): JSX.Element {
           </div>
         </div>
 
-        <div className="mt-8 rounded-2xl border border-slate-800 bg-slate-950/40 p-5">
-          <h2 className="text-lg font-semibold text-white">Phase 1 status</h2>
-          <p className="mt-2 text-sm text-slate-300">
-            Frontend auth is now connected to the backend. Next step is building the
-            resume upload and interview setup flow.
-          </p>
-          <Link
-            href="/interview/new"
-            className="mt-4 inline-block rounded-xl bg-white px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-slate-200"
-          >
-            Upload Resume
-          </Link>
+        <div className="mt-8 grid gap-4 md:grid-cols-2">
+          <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-5">
+            <h2 className="text-lg font-semibold text-white">Resume</h2>
+            <p className="mt-2 text-sm text-slate-300">
+              Upload a PDF or DOCX resume to extract your skills.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Link
+                href="/interview/new"
+                className="inline-block rounded-xl bg-white px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-slate-200"
+              >
+                Upload Resume
+              </Link>
+              <Link
+                href="/resumes"
+                className="inline-block rounded-xl border border-slate-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800"
+              >
+                View All
+              </Link>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-5">
+            <h2 className="text-lg font-semibold text-white">Job Descriptions</h2>
+            <p className="mt-2 text-sm text-slate-300">
+              Paste a job description to extract required skills and keywords.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Link
+                href="/jobs/new"
+                className="inline-block rounded-xl bg-white px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-slate-200"
+              >
+                Add Job Description
+              </Link>
+              <Link
+                href="/jobs"
+                className="inline-block rounded-xl border border-slate-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800"
+              >
+                View All
+              </Link>
+            </div>
+          </div>
         </div>
       </div>
     </main>
