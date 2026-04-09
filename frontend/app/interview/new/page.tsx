@@ -9,6 +9,15 @@ import type { ResumeUploadResponse } from "@/types";
 
 
 const ACCEPTED_FILE_TYPES = ".pdf,.docx";
+const NON_RESUME_ERROR_FRAGMENT = "does not appear to be a resume";
+const SUSPICIOUS_FILENAME_PATTERN = /(plan|roadmap|proposal|strategy|requirements|spec)/i;
+
+function formatResumeUploadError(message: string): string {
+  if (message.toLowerCase().includes(NON_RESUME_ERROR_FRAGMENT)) {
+    return "This file looks like a non-resume document (for example, a project plan). Please upload your resume/CV in PDF or DOCX format.";
+  }
+  return message;
+}
 
 export default function NewInterviewPage(): JSX.Element {
   const { isAuthenticated, isLoading } = useAuth();
@@ -16,6 +25,8 @@ export default function NewInterviewPage(): JSX.Element {
   const [uploadResult, setUploadResult] = useState<ResumeUploadResponse | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const selectedFileLooksSuspicious =
+    selectedFile !== null && SUSPICIOUS_FILENAME_PATTERN.test(selectedFile.name);
 
   async function handleUpload(event: FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
@@ -49,7 +60,7 @@ export default function NewInterviewPage(): JSX.Element {
         if (error.status === 401) {
           setErrorMessage("You need to log in before uploading a resume.");
         } else {
-          setErrorMessage(error.message);
+          setErrorMessage(formatResumeUploadError(error.message));
         }
       } else {
         setErrorMessage("Unable to upload resume right now. Please try again.");
@@ -94,7 +105,7 @@ export default function NewInterviewPage(): JSX.Element {
       <div className="mx-auto max-w-5xl rounded-2xl border border-slate-800 bg-slate-900/70 p-8 shadow-xl">
         <h1 className="text-3xl font-semibold text-white">Start a new interview</h1>
         <p className="mt-2 text-sm text-slate-300">
-          Upload your resume first. Job description setup will be added in the next phase.
+          Upload your resume first. Non-resume documents (project plans, specs, roadmaps) are automatically rejected.
         </p>
 
         <form onSubmit={handleUpload} className="mt-6 space-y-4">
@@ -102,6 +113,9 @@ export default function NewInterviewPage(): JSX.Element {
             <label htmlFor="resume" className="mb-2 block text-sm font-medium text-slate-200">
               Resume (PDF or DOCX)
             </label>
+            <p className="mb-2 text-xs text-slate-400">
+              Include resume sections like summary, experience, education, skills, and contact details for best detection.
+            </p>
             <input
               id="resume"
               type="file"
@@ -117,6 +131,12 @@ export default function NewInterviewPage(): JSX.Element {
 
           {selectedFile ? (
             <p className="text-sm text-slate-300">Selected file: {selectedFile.name}</p>
+          ) : null}
+
+          {selectedFileLooksSuspicious ? (
+            <div className="rounded-xl border border-amber-900 bg-amber-950/30 px-4 py-3 text-sm text-amber-200">
+              This filename looks like a plan/spec document. Upload may be rejected if the content is not resume-like.
+            </div>
           ) : null}
 
           {errorMessage ? (
@@ -165,10 +185,25 @@ export default function NewInterviewPage(): JSX.Element {
         ) : null}
 
         <section className="mt-8 rounded-2xl border border-slate-800 bg-slate-950/40 p-5">
-          <h2 className="text-lg font-semibold text-white">Job Description (Coming Next)</h2>
+          <h2 className="text-lg font-semibold text-white">Step 2 — Add a Job Description</h2>
           <p className="mt-2 text-sm text-slate-300">
-            This section is intentionally left as a placeholder for the upcoming interview setup steps.
+            Paste the job description you are targeting. Skills and keywords will be extracted
+            automatically and used to tailor your mock interview questions.
           </p>
+          <div className="mt-4 flex flex-wrap gap-3">
+            <Link
+              href="/jobs/new"
+              className="inline-block rounded-xl bg-white px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-slate-200"
+            >
+              Add Job Description
+            </Link>
+            <Link
+              href="/jobs"
+              className="inline-block rounded-xl border border-slate-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800"
+            >
+              View Saved Descriptions
+            </Link>
+          </div>
         </section>
       </div>
     </main>

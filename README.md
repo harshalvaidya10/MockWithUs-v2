@@ -8,6 +8,8 @@ MockWithUs is a full-stack mock interview platform scaffold built with a FastAPI
 2. Copy `frontend/.env.local.example` to `frontend/.env.local`.
 3. Start backend + database from root: `docker compose up --build`.
 4. Start frontend: `cd frontend && npm install && npm run dev`.
+5. Optional DB UI (dev-only): `docker compose --profile devtools up -d adminer` then open `http://localhost:8080`.
+6. Optional frontend E2E: `cd frontend && npm run test:e2e`.
 
 ## Project Structure
 

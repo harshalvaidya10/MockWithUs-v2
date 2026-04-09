@@ -12,6 +12,9 @@ frontend/.next/
 frontend/out/
 frontend/.turbo/
 frontend/coverage/
+frontend/playwright-report/
+frontend/test-results/
+frontend/.playwright/
 frontend/tsconfig.tsbuildinfo
 frontend/npm-debug.log*
 frontend/yarn-debug.log*
