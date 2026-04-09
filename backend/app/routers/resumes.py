@@ -150,6 +150,7 @@ async def upload_resume(
         filename=resume.filename,
         skills=resume.skills,
         created_at=resume.created_at,
+        is_resume_like=True,
     )
 
 
@@ -158,10 +159,11 @@ async def list_resumes(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> list[ResumeUploadResponse]:
-    """Return resume-like uploads for the authenticated user, newest first.
+    """Return all uploaded documents for the authenticated user, newest first.
 
-    Legacy non-resume documents uploaded before validation was added are
-    excluded from this list so users only see selectable resumes.
+    Each item includes an `is_resume_like` flag so clients can decide whether
+    it should be selectable for matching while still allowing cleanup/deletion
+    of legacy non-resume uploads.
     """
     resumes = (
         db.query(Resume)
@@ -170,26 +172,28 @@ async def list_resumes(
         .all()
     )
 
-    valid_resumes: list[Resume] = []
+    response_payload: list[ResumeUploadResponse] = []
     for resume in resumes:
-        is_resume_like, _ = assess_resume_document(resume.parsed_text or "", resume.filename)
-        if is_resume_like:
-            valid_resumes.append(resume)
-        else:
+        is_resume_like, _ = assess_resume_document(
+            resume.parsed_text or "",
+            resume.filename,
+        )
+        if not is_resume_like:
             logger.info(
-                "Excluding non-resume document from resume list",
+                "Resume list includes a non-resume-like upload.",
                 extra={"resume_id": str(resume.id), "user_id": str(current_user.id)},
             )
-
-    return [
-        ResumeUploadResponse(
-            id=r.id,
-            filename=r.filename,
-            skills=r.skills,
-            created_at=r.created_at,
+        response_payload.append(
+            ResumeUploadResponse(
+                id=resume.id,
+                filename=resume.filename,
+                skills=resume.skills,
+                created_at=resume.created_at,
+                is_resume_like=is_resume_like,
+            )
         )
-        for r in valid_resumes
-    ]
+
+    return response_payload
 
 
 @router.delete(

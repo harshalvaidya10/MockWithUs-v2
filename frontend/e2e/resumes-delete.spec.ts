@@ -5,6 +5,7 @@ type ResumeRow = {
   filename: string;
   skills: string[];
   created_at: string;
+  is_resume_like: boolean;
 };
 
 test("delete resume removes row and stays deleted after refresh", async ({ context, page }) => {
@@ -23,12 +24,14 @@ test("delete resume removes row and stays deleted after refresh", async ({ conte
       filename: "resume-keep.pdf",
       skills: ["Python", "FastAPI"],
       created_at: "2026-04-08T06:35:09.913153Z",
+      is_resume_like: true,
     },
     {
       id: "22222222-2222-2222-2222-222222222222",
       filename: "resume-delete.pdf",
       skills: ["TypeScript"],
       created_at: "2026-04-08T06:40:09.913153Z",
+      is_resume_like: true,
     },
   ];
 

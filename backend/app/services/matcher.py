@@ -164,20 +164,23 @@ def run_match(
     """Compute a complete resume-to-JD match result from embeddings and skill lists.
 
     Graceful fallback: if either embedding is None, skill-coverage score is used
-    instead of semantic similarity. A WARNING is logged so operators know that
-    semantic matching was bypassed — this is common for documents uploaded before
-    the embedding service was enabled.
+    instead of semantic similarity. If no JD skills are available, fallback uses
+    a safe default of 0.0 to avoid falsely reporting a perfect match.
+    A WARNING is logged so operators know semantic matching was bypassed — this
+    is common for documents uploaded before the embedding service was enabled.
 
     The returned MatchResult is consumed by POST /interviews/start in Phase 4.
     """
     skill_gaps = find_skill_gaps(resume_skills, jd_required_skills)
+    has_jd_requirements = any(skill and skill.strip() for skill in jd_required_skills)
+    fallback_match_score = skill_gaps["coverage"] if has_jd_requirements else 0.0
 
     if resume_embedding is None or jd_embedding is None:
         logger.warning(
             "One or both embeddings are missing — falling back to skill-coverage score. "
             "Re-process documents to enable semantic matching."
         )
-        match_score: float = skill_gaps["coverage"]
+        match_score: float = fallback_match_score
     else:
         try:
             match_score = compute_similarity(resume_embedding, jd_embedding)
@@ -186,7 +189,7 @@ def run_match(
                 "Invalid embeddings supplied to matcher — falling back to skill coverage.",
                 exc_info=True,
             )
-            match_score = skill_gaps["coverage"]
+            match_score = fallback_match_score
 
     match_score = max(0.0, min(1.0, match_score))
     summary = generate_match_summary(match_score, skill_gaps, job_title=job_title)

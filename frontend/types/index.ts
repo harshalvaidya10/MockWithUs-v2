@@ -54,6 +54,7 @@ export interface ResumeUploadResponse {
   filename: string;
   skills: string[];
   created_at: string;
+  is_resume_like?: boolean;
 }
 
 export interface JobOut {

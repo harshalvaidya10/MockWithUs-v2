@@ -22,7 +22,7 @@ _SKILL_PATTERNS: Final[tuple[tuple[re.Pattern[str], str], ...]] = tuple(
         (r"\bjavascript\b", "javascript"),
         (r"\btypescript\b", "typescript"),
         (r"\bjava\b", "java"),
-        (r"\bgolang\b|\bgo\b", "go"),
+        (r"\bgolang\b|\bgo[-\s]?lang\b", "go"),
         (r"\brust\b", "rust"),
         (r"\bc\+\+", "c++"),
         (r"\bc#", "c#"),

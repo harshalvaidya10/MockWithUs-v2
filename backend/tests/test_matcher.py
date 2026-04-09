@@ -216,6 +216,17 @@ def test_run_match_falls_back_to_coverage_when_no_embeddings() -> None:
     assert math.isclose(result["match_score"], 2 / 3, rel_tol=1e-5)
 
 
+def test_run_match_no_embeddings_with_empty_jd_skills_defaults_to_zero() -> None:
+    """Missing embeddings + no JD skills should not be treated as a perfect match."""
+    result = run_match(
+        resume_embedding=None,
+        jd_embedding=None,
+        resume_skills=["python", "docker"],
+        jd_required_skills=[],
+    )
+    assert math.isclose(result["match_score"], 0.0, abs_tol=1e-6)
+
+
 def test_run_match_partial_embedding_falls_back(caplog: pytest.LogCaptureFixture) -> None:
     """A single None embedding (resume or JD) must trigger the fallback path."""
     vec = _unit_vec([1.0, 0.0])
@@ -238,6 +249,17 @@ def test_run_match_invalid_embedding_shape_falls_back_to_coverage() -> None:
         jd_required_skills=["python", "docker"],
     )
     assert math.isclose(result["match_score"], 0.5, abs_tol=1e-6)
+
+
+def test_run_match_invalid_embeddings_with_empty_jd_skills_defaults_to_zero() -> None:
+    """Invalid embeddings + no JD skill requirements should use safe fallback score 0.0."""
+    result = run_match(
+        resume_embedding=[1.0, 0.0],
+        jd_embedding=[1.0, 0.0, 0.0],
+        resume_skills=["python"],
+        jd_required_skills=["", "   "],
+    )
+    assert math.isclose(result["match_score"], 0.0, abs_tol=1e-6)
 
 
 def test_run_match_score_clamped() -> None:

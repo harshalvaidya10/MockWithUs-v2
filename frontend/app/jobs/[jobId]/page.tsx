@@ -2,17 +2,11 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 
 import { apiRequest, ApiError } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import type { JobDetailOut, ResumeUploadResponse, MatchResult } from "@/types";
-
-interface JobDetailPageProps {
-  params: {
-    jobId: string;
-  };
-}
 
 function scoreColor(score: number): string {
   if (score >= 0.8) return "text-emerald-400";
@@ -35,9 +29,17 @@ function getApiErrorMessage(error: unknown, fallbackMessage: string): string {
   return fallbackMessage;
 }
 
-export default function JobDetailPage({ params }: JobDetailPageProps): JSX.Element {
+function isResumeLike(resume: ResumeUploadResponse): boolean {
+  // Backward-compatible default for older API payloads that omit this field.
+  return resume.is_resume_like !== false;
+}
+
+export default function JobDetailPage(): JSX.Element {
+  const routeParams = useParams<{ jobId?: string | string[] }>();
   const router = useRouter();
   const { isAuthenticated, isLoading: authLoading } = useAuth();
+  const jobIdParam = routeParams?.jobId;
+  const jobId = Array.isArray(jobIdParam) ? jobIdParam[0] : jobIdParam;
 
   const [job, setJob] = useState<JobDetailOut | null>(null);
   const [isFetching, setIsFetching] = useState(true);
@@ -51,6 +53,7 @@ export default function JobDetailPage({ params }: JobDetailPageProps): JSX.Eleme
   const [isMatchLoading, setIsMatchLoading] = useState(false);
   const [matchResult, setMatchResult] = useState<MatchResult | null>(null);
   const [matchError, setMatchError] = useState<string | null>(null);
+  const selectableResumes = resumes.filter(isResumeLike);
 
   const fetchResumes = useCallback(async (): Promise<void> => {
     setIsResumesLoading(true);
@@ -59,10 +62,11 @@ export default function JobDetailPage({ params }: JobDetailPageProps): JSX.Eleme
     try {
       const data = await apiRequest<ResumeUploadResponse[]>("/resumes/");
       setResumes(data);
+      const eligibleResumes = data.filter(isResumeLike);
       setSelectedResumeId((current) => {
-        if (data.length === 0) return "";
-        if (current && data.some((resume) => resume.id === current)) return current;
-        return data[0].id;
+        if (eligibleResumes.length === 0) return "";
+        if (current && eligibleResumes.some((resume) => resume.id === current)) return current;
+        return eligibleResumes[0].id;
       });
     } catch (error) {
       if (error instanceof ApiError && error.status === 404) {
@@ -85,10 +89,15 @@ export default function JobDetailPage({ params }: JobDetailPageProps): JSX.Eleme
       router.push("/login");
       return;
     }
+    if (!jobId) {
+      setErrorMessage("Job description not found.");
+      setIsFetching(false);
+      return;
+    }
 
     async function fetchJob(): Promise<void> {
       try {
-        const data = await apiRequest<JobDetailOut>(`/jobs/${params.jobId}`);
+        const data = await apiRequest<JobDetailOut>(`/jobs/${jobId}`);
         setJob(data);
       } catch (error) {
         if (error instanceof ApiError && error.status === 404) {
@@ -103,17 +112,17 @@ export default function JobDetailPage({ params }: JobDetailPageProps): JSX.Eleme
 
     void fetchJob();
     void fetchResumes();
-  }, [isAuthenticated, authLoading, router, params.jobId, fetchResumes]);
+  }, [isAuthenticated, authLoading, router, jobId, fetchResumes]);
 
   async function handleRunMatch(): Promise<void> {
-    if (!selectedResumeId) return;
+    if (!selectedResumeId || !jobId) return;
     setMatchError(null);
     setMatchResult(null);
     setIsMatchLoading(true);
     try {
       const query = new URLSearchParams({ resume_id: selectedResumeId });
       const data = await apiRequest<MatchResult>(
-        `/jobs/${params.jobId}/match?${query.toString()}`
+        `/jobs/${jobId}/match?${query.toString()}`
       );
       setMatchResult(data);
     } catch (error) {
@@ -216,12 +225,23 @@ export default function JobDetailPage({ params }: JobDetailPageProps): JSX.Eleme
                   }}
                   className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-sm text-white outline-none transition focus:border-slate-500"
                 >
+                  {selectableResumes.length === 0 ? (
+                    <option value="" disabled>
+                      No resume-like uploads available for matching
+                    </option>
+                  ) : null}
                   {resumes.map((r) => (
-                    <option key={r.id} value={r.id}>
+                    <option key={r.id} value={r.id} disabled={!isResumeLike(r)}>
                       {r.filename} — {new Date(r.created_at).toLocaleDateString()}
+                      {!isResumeLike(r) ? " (Not resume-like)" : ""}
                     </option>
                   ))}
                 </select>
+                {resumes.some((resume) => !isResumeLike(resume)) ? (
+                  <p className="mt-1.5 text-xs text-amber-300">
+                    Non-resume-like uploads are shown for visibility but are disabled for matching.
+                  </p>
+                ) : null}
               </div>
               <button
                 type="button"

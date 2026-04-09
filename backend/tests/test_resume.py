@@ -73,13 +73,13 @@ class _FakeQuery:
         attr_name = getattr(left, "key", None)
 
         if attr_name is None or operator is None:
-            return True
+            return False
 
         right_value = getattr(right, "value", right)
         try:
             return bool(operator(getattr(obj, attr_name), right_value))
         except Exception:
-            return True
+            return False
 
     def filter(self, *conditions: object) -> _FakeQuery:
         for condition in conditions:
@@ -144,6 +144,46 @@ def test_delete_requires_auth() -> None:
     assert response.status_code == 401
 
 
+def test_fake_query_matches_condition_fails_closed_for_unsupported_expression() -> None:
+    """Unsupported SQLAlchemy-like conditions must not match rows by default."""
+
+    class _Row:
+        def __init__(self) -> None:
+            self.user_id = uuid4()
+
+    query = _FakeQuery([_Row()], _Row)
+
+    class _UnsupportedCondition:
+        pass
+
+    assert query.filter(_UnsupportedCondition()).all() == []
+
+
+def test_fake_query_matches_condition_fails_closed_when_operator_raises() -> None:
+    """Condition-evaluation errors must not be silently treated as matches."""
+
+    class _Row:
+        def __init__(self) -> None:
+            self.user_id = uuid4()
+
+    class _Left:
+        key = "user_id"
+
+    class _Right:
+        value = uuid4()
+
+    class _Condition:
+        left = _Left()
+        right = _Right()
+
+        @staticmethod
+        def operator(_lhs: object, _rhs: object) -> bool:
+            raise RuntimeError("Simulated operator failure")
+
+    query = _FakeQuery([_Row()], _Row)
+    assert query.filter(_Condition()).all() == []
+
+
 def test_upload_rejects_unsupported_file_type(authenticated_context: dict[str, object]) -> None:
     """Ensure unsupported extensions are rejected with a clear 400 error."""
 
@@ -193,9 +233,10 @@ def test_successful_upload_stores_resume_and_returns_expected_shape(
 
     assert response.status_code == 201
     payload = response.json()
-    assert set(payload.keys()) == {"id", "filename", "skills", "created_at"}
+    assert set(payload.keys()) == {"id", "filename", "skills", "created_at", "is_resume_like"}
     assert payload["filename"] == "resume.pdf"
     assert payload["skills"] == ["Python", "FastAPI", "PostgreSQL"]
+    assert payload["is_resume_like"] is True
 
     fake_db = authenticated_context["db"]
     assert isinstance(fake_db, FakeSession)
@@ -296,6 +337,28 @@ def test_assess_resume_document_rejects_suspicious_filename() -> None:
     )
     assert not is_resume_like
     assert rejection_reason == NON_RESUME_UPLOAD_MESSAGE
+
+
+def test_assess_resume_document_accepts_resume_hint_with_underscores() -> None:
+    """Underscore-separated 'resume' hint should prevent false suspicious-filename reject."""
+    resume_like_text = """
+    Jane Doe
+    jane.doe@example.com | +1 (415) 555-0199
+    Professional Summary
+    Software Engineer with Python and FastAPI experience.
+    Work Experience
+    Software Engineer, Acme Corp (2022 - 2025)
+    Skills: Python, FastAPI, PostgreSQL
+    Education
+    B.Tech in Computer Science, 2021
+    """
+
+    is_resume_like, rejection_reason = assess_resume_document(
+        resume_like_text,
+        "john_resume_implementation_plan_2026.pdf",
+    )
+    assert is_resume_like
+    assert rejection_reason == ""
 
 
 def test_upload_rejects_non_resume_text_document(
@@ -403,12 +466,13 @@ def test_list_resumes_returns_uploaded_resumes(
     assert payload[0]["id"] == uploaded_resume["id"]
     assert payload[0]["filename"] == "resume.pdf"
     assert payload[0]["skills"] == ["Python", "FastAPI"]
+    assert payload[0]["is_resume_like"] is True
 
 
-def test_list_resumes_excludes_legacy_non_resume_documents(
+def test_list_resumes_includes_legacy_non_resume_documents_with_status_flag(
     authenticated_context: dict[str, object],
 ) -> None:
-    """GET /resumes/ should hide stored docs that do not look like resumes."""
+    """GET /resumes/ should include all docs and flag non-resume-like uploads."""
     fake_db = authenticated_context["db"]
     user = authenticated_context["user"]
     assert isinstance(fake_db, FakeSession)
@@ -448,9 +512,13 @@ def test_list_resumes_excludes_legacy_non_resume_documents(
     assert list_response.status_code == 200
     payload = list_response.json()
 
-    assert len(payload) == 1
-    assert payload[0]["id"] == str(valid_resume.id)
-    assert payload[0]["filename"] == "resume.pdf"
+    assert len(payload) == 2
+
+    by_id = {item["id"]: item for item in payload}
+    assert by_id[str(valid_resume.id)]["filename"] == "resume.pdf"
+    assert by_id[str(valid_resume.id)]["is_resume_like"] is True
+    assert by_id[str(plan_doc.id)]["filename"] == "implementation_plan.docx"
+    assert by_id[str(plan_doc.id)]["is_resume_like"] is False
 
 
 def test_delete_resume_success_removes_record_and_file(

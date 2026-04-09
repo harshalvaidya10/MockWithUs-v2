@@ -75,7 +75,7 @@ _NON_RESUME_FILENAME_PATTERN = re.compile(
     flags=re.IGNORECASE,
 )
 _RESUME_FILENAME_HINT_PATTERN = re.compile(
-    r"\b(resume|cv|curriculum[-_\s]?vitae)\b",
+    r"(?<![A-Za-z0-9])(resume|cv|curriculum[-_\s]?vitae)(?![A-Za-z0-9])",
     flags=re.IGNORECASE,
 )
 

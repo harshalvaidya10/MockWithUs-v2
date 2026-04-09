@@ -59,5 +59,23 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
     return undefined as T;
   }
 
-  return JSON.parse(rawBody) as T;
+  const contentType = response.headers.get("content-type") ?? "";
+  const mediaType = contentType.split(";")[0].trim().toLowerCase();
+  const isJsonResponse = mediaType === "application/json" || mediaType.endsWith("+json");
+
+  if (!isJsonResponse) {
+    return rawBody as T;
+  }
+
+  try {
+    return JSON.parse(rawBody) as T;
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new ApiError(
+        `Failed to parse JSON response (status ${response.status}). Raw body: ${rawBody}`,
+        response.status,
+      );
+    }
+    throw error;
+  }
 }

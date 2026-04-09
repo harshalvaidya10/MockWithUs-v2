@@ -8,6 +8,11 @@ import { apiRequest, ApiError } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
 import type { ResumeUploadResponse } from "@/types";
 
+function isResumeLike(resume: ResumeUploadResponse): boolean {
+  // Backward-compatible default for older API payloads that omit this field.
+  return resume.is_resume_like !== false;
+}
+
 export default function ResumesPage(): JSX.Element {
   const router = useRouter();
   const { isAuthenticated, isLoading: authLoading } = useAuth();
@@ -146,7 +151,18 @@ export default function ResumesPage(): JSX.Element {
                 >
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="truncate text-base font-medium text-white">{resume.filename}</p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="truncate text-base font-medium text-white">{resume.filename}</p>
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide ${
+                            isResumeLike(resume)
+                              ? "border border-emerald-800 bg-emerald-950/50 text-emerald-200"
+                              : "border border-amber-800 bg-amber-950/50 text-amber-200"
+                          }`}
+                        >
+                          {isResumeLike(resume) ? "Resume-like" : "Non-resume"}
+                        </span>
+                      </div>
                       <p className="mt-0.5 text-xs text-slate-500">
                         Uploaded {new Date(resume.created_at).toLocaleString()}
                       </p>

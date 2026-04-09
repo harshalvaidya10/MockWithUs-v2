@@ -74,13 +74,13 @@ class _FakeQuery:
         attr_name = getattr(left, "key", None)
 
         if attr_name is None or operator is None:
-            return True
+            return False
 
         right_value = getattr(right, "value", right)
         try:
             return bool(operator(getattr(obj, attr_name), right_value))
         except Exception:
-            return True
+            return False
 
     def filter(self, *conditions: object) -> _FakeQuery:
         for condition in conditions:
@@ -217,6 +217,46 @@ def test_create_job_too_short_rejected(auth_context: dict) -> None:
     assert response.status_code == 422
 
 
+def test_fake_query_matches_condition_fails_closed_for_unsupported_expression() -> None:
+    """Unsupported SQLAlchemy-like conditions must not match rows by default."""
+
+    class _Row:
+        def __init__(self) -> None:
+            self.user_id = uuid4()
+
+    query = _FakeQuery([_Row()], _Row)
+
+    class _UnsupportedCondition:
+        pass
+
+    assert query.filter(_UnsupportedCondition()).all() == []
+
+
+def test_fake_query_matches_condition_fails_closed_when_operator_raises() -> None:
+    """Condition evaluation errors must not be silently treated as matches."""
+
+    class _Row:
+        def __init__(self) -> None:
+            self.user_id = uuid4()
+
+    class _Left:
+        key = "user_id"
+
+    class _Right:
+        value = uuid4()
+
+    class _Condition:
+        left = _Left()
+        right = _Right()
+
+        @staticmethod
+        def operator(_lhs: object, _rhs: object) -> bool:
+            raise RuntimeError("Simulated operator failure")
+
+    query = _FakeQuery([_Row()], _Row)
+    assert query.filter(_Condition()).all() == []
+
+
 # ---------------------------------------------------------------------------
 # Happy-path creation tests
 # ---------------------------------------------------------------------------
@@ -260,6 +300,26 @@ def test_create_job_extracts_skills(
         assert expected_skill in skills, f"Expected '{expected_skill}' in required_skills but got: {skills}"
 
 
+def test_create_job_does_not_treat_plain_go_verb_as_go_skill(
+    auth_context: dict,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Plain English verb usage of 'go' must not produce Go language skill."""
+    monkeypatch.setattr(jobs_router, "generate_embedding", lambda _: [0.0] * 384)
+
+    jd_with_go_verb = (
+        "We need engineers who can go deep into systems and go fast in execution. "
+        "Strong Python and Docker experience required for backend delivery."
+    )
+    response = client.post("/jobs/", json={"content": jd_with_go_verb})
+
+    assert response.status_code == 201
+    skills = response.json()["required_skills"]
+    assert "python" in skills
+    assert "docker" in skills
+    assert "go" not in skills
+
+
 # ---------------------------------------------------------------------------
 # List endpoint tests
 # ---------------------------------------------------------------------------
@@ -270,34 +330,30 @@ def test_list_jobs_returns_only_own_jobs(monkeypatch: pytest.MonkeyPatch) -> Non
 
     user_a = _make_user()
     user_b = _make_user()
-    db_a = FakeSession()
-    db_b = FakeSession()
+    shared_db = FakeSession()
 
-    # User A creates a job
-    def db_a_override():
-        yield db_a
+    def shared_db_override():
+        yield shared_db
 
-    def db_b_override():
-        yield db_b
-
-    app.dependency_overrides[get_db] = db_a_override
+    app.dependency_overrides[get_db] = shared_db_override
     app.dependency_overrides[get_current_user] = lambda: user_a
-    client.post("/jobs/", json={"content": REALISTIC_JD})
+    create_a = client.post("/jobs/", json={"content": REALISTIC_JD})
+    assert create_a.status_code == 201
 
-    # User B creates a job in their own session
-    app.dependency_overrides[get_db] = db_b_override
+    # User B creates a job in the same DB; ownership must come from user_id filtering.
     app.dependency_overrides[get_current_user] = lambda: user_b
-    client.post("/jobs/", json={"content": REALISTIC_JD})
+    create_b = client.post("/jobs/", json={"content": REALISTIC_JD})
+    assert create_b.status_code == 201
 
     # Each user's list must only contain their own job
-    app.dependency_overrides[get_db] = db_a_override
     app.dependency_overrides[get_current_user] = lambda: user_a
     ids_a = {j["id"] for j in client.get("/jobs/").json()}
 
-    app.dependency_overrides[get_db] = db_b_override
     app.dependency_overrides[get_current_user] = lambda: user_b
     ids_b = {j["id"] for j in client.get("/jobs/").json()}
 
+    assert len(ids_a) == 1
+    assert len(ids_b) == 1
     assert ids_a.isdisjoint(ids_b), "Users share job IDs — ownership isolation broken."
 
     app.dependency_overrides.clear()
@@ -336,23 +392,20 @@ def test_get_job_of_other_user_returns_404(monkeypatch: pytest.MonkeyPatch) -> N
 
     user_a = _make_user()
     user_b = _make_user()
-    db_a = FakeSession()
-    db_b = FakeSession()  # User B has an empty session — job_a is not present
+    shared_db = FakeSession()
 
-    def db_a_override():
-        yield db_a
-
-    def db_b_override():
-        yield db_b
+    def shared_db_override():
+        yield shared_db
 
     # User A creates a job
-    app.dependency_overrides[get_db] = db_a_override
+    app.dependency_overrides[get_db] = shared_db_override
     app.dependency_overrides[get_current_user] = lambda: user_a
     create_resp = client.post("/jobs/", json={"content": REALISTIC_JD})
+    assert create_resp.status_code == 201
     job_id = create_resp.json()["id"]
 
-    # User B attempts to fetch user A's job ID from their own empty session
-    app.dependency_overrides[get_db] = db_b_override
+    # User B attempts to fetch user A's job ID from the same DB.
+    # Access must still be denied via user_id ownership filtering.
     app.dependency_overrides[get_current_user] = lambda: user_b
     response = client.get(f"/jobs/{job_id}")
 
