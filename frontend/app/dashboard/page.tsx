@@ -63,67 +63,40 @@ export default function DashboardPage(): JSX.Element {
           </button>
         </div>
 
-        <div className="mt-8 grid gap-4 md:grid-cols-2">
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-5">
-            <p className="text-xs uppercase tracking-wide text-slate-400">Email</p>
-            <p className="mt-2 text-sm text-white">{user.email}</p>
-          </div>
+        <p className="mt-8 text-sm text-slate-300">
+          Follow this flow to start an interview: Resume → Job Description → Resume–JD Matching.
+        </p>
 
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-5">
-            <p className="text-xs uppercase tracking-wide text-slate-400">User ID</p>
-            <p className="mt-2 break-all text-sm text-white">{user.id}</p>
-          </div>
-
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-5 md:col-span-2">
-            <p className="text-xs uppercase tracking-wide text-slate-400">Account Created</p>
-            <p className="mt-2 text-sm text-white">
-              {new Date(user.created_at).toLocaleString()}
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-8 grid gap-4 md:grid-cols-2">
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-5">
+        <div className="mt-5 grid gap-4 md:grid-cols-3">
+          <Link
+            href="/dashboard/resumes"
+            className="rounded-2xl border border-slate-800 bg-slate-950/40 p-5 transition hover:border-slate-600 hover:bg-slate-900"
+          >
             <h2 className="text-lg font-semibold text-white">Resume</h2>
             <p className="mt-2 text-sm text-slate-300">
-              Upload a PDF or DOCX resume to extract your skills.
+              Upload your resume and review previously uploaded files.
             </p>
-            <div className="mt-4 flex flex-wrap gap-2">
-              <Link
-                href="/interview/new"
-                className="inline-block rounded-xl bg-white px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-slate-200"
-              >
-                Upload Resume
-              </Link>
-              <Link
-                href="/resumes"
-                className="inline-block rounded-xl border border-slate-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800"
-              >
-                View All
-              </Link>
-            </div>
-          </div>
+          </Link>
 
-          <div className="rounded-2xl border border-slate-800 bg-slate-950/40 p-5">
-            <h2 className="text-lg font-semibold text-white">Job Descriptions</h2>
+          <Link
+            href="/dashboard/jobs"
+            className="rounded-2xl border border-slate-800 bg-slate-950/40 p-5 transition hover:border-slate-600 hover:bg-slate-900"
+          >
+            <h2 className="text-lg font-semibold text-white">Job Description</h2>
             <p className="mt-2 text-sm text-slate-300">
-              Paste a job description to extract required skills and keywords.
+              Save your target job description and review detected skills.
             </p>
-            <div className="mt-4 flex flex-wrap gap-2">
-              <Link
-                href="/jobs/new"
-                className="inline-block rounded-xl bg-white px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-slate-200"
-              >
-                Add Job Description
-              </Link>
-              <Link
-                href="/jobs"
-                className="inline-block rounded-xl border border-slate-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800"
-              >
-                View All
-              </Link>
-            </div>
-          </div>
+          </Link>
+
+          <Link
+            href="/dashboard/matching"
+            className="rounded-2xl border border-slate-800 bg-slate-950/40 p-5 transition hover:border-slate-600 hover:bg-slate-900"
+          >
+            <h2 className="text-lg font-semibold text-white">Resume–JD Matching</h2>
+            <p className="mt-2 text-sm text-slate-300">
+              Run matching, review fit score, and start the interview session.
+            </p>
+          </Link>
         </div>
       </div>
     </main>

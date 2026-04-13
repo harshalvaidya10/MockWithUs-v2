@@ -8,7 +8,13 @@ from app.schemas.auth import (
     UserOut,
 )
 from app.schemas.evaluation import EvalOut, FeedbackOut
-from app.schemas.interview import QuestionOut, SessionCreate, SessionOut
+from app.schemas.interview import (
+    QuestionOut,
+    SessionCreate,
+    SessionOut,
+    SessionStartOut,
+    SessionStartQuestionOut,
+)
 from app.schemas.resume import ResumeOut, ResumeUploadResponse
 
 __all__ = [
@@ -21,6 +27,8 @@ __all__ = [
     "ResumeUploadResponse",
     "SessionCreate",
     "SessionOut",
+    "SessionStartOut",
+    "SessionStartQuestionOut",
     "SignupRequest",
     "SignupResponse",
     "Token",
