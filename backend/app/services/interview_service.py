@@ -106,13 +106,12 @@ async def start_interview_session(
         job_id=job.id,
         match_score=match_result["match_score"],
         match_summary=match_result["match_summary"],
-        status="ready",
+        status="draft",
     )
 
     try:
         db.add(session)
-        db.commit()
-        db.refresh(session)
+        db.flush()
     except Exception as exc:
         db.rollback()
         logger.exception("Failed to create interview session for user %s", user_id)
@@ -149,8 +148,11 @@ async def start_interview_session(
         db.add(question)
         questions.append(question)
 
+    session.status = "ready"
+
     try:
         db.commit()
+        db.refresh(session)
         for question in questions:
             db.refresh(question)
     except Exception as exc:

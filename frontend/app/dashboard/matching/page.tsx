@@ -67,6 +67,9 @@ export default function DashboardMatchingPage(): JSX.Element {
       setResumes(resumeData);
       setJobs(jobData);
       setSetupErrorMessage(null);
+      setMatchResult(null);
+      setIsMatchLoading(false);
+      setMatchError(null);
 
       const eligibleResumes = resumeData.filter(isResumeLike);
       setSelectedResumeId((currentValue) => {

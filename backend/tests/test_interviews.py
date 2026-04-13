@@ -26,12 +26,21 @@ class FakeSession:
     def __init__(self) -> None:
         self._store: list[object] = []
         self.commit_called = False
+        self.commit_count = 0
 
     def add(self, obj: object) -> None:
         self._store.append(obj)
 
     def commit(self) -> None:
         self.commit_called = True
+        self.commit_count += 1
+
+    def flush(self) -> None:
+        for obj in self._store:
+            if getattr(obj, "id", None) is None:
+                object.__setattr__(obj, "id", uuid4())
+            if hasattr(obj, "created_at") and getattr(obj, "created_at", None) is None:
+                object.__setattr__(obj, "created_at", datetime.now(timezone.utc))
 
     def refresh(self, obj: object) -> None:
         if getattr(obj, "id", None) is None:
@@ -270,6 +279,7 @@ def test_start_interview_generates_and_persists_questions(auth_context: dict) ->
     assert len(persisted_sessions) == 1
     assert len(persisted_questions) == 8
     assert sorted(question.order_index for question in persisted_questions) == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert fake_db.commit_count == 1
 
 
 def test_get_interview_session_returns_saved_questions(auth_context: dict) -> None:
