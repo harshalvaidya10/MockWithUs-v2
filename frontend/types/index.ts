@@ -83,3 +83,18 @@ export interface MatchResult {
   resume_id: string;
   job_id: string;
 }
+
+export interface InterviewStartQuestion {
+  id: string;
+  question_text: string;
+  category: string;
+  rationale: string;
+  order_index: number;
+}
+
+export interface InterviewStartResponse {
+  session_id: string;
+  match_score: number;
+  match_summary: string;
+  questions: InterviewStartQuestion[];
+}

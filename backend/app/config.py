@@ -28,9 +28,13 @@ class Settings(BaseSettings):
     access_token_expire_days: int = Field(default=7, alias="ACCESS_TOKEN_EXPIRE_DAYS")
 
     llm_provider: str = Field(default="groq", alias="LLM_PROVIDER")
-    llm_model: str = Field(default="llama-3.1-70b-versatile", alias="LLM_MODEL")
+    llm_model: str = Field(default="qwen/qwen3-32b", alias="LLM_MODEL")
+    openrouter_api_key: str | None = Field(default=None, alias="OPENROUTER_API_KEY")
+    openrouter_base_url: str = Field(default="https://openrouter.ai/api/v1", alias="OPENROUTER_BASE_URL")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
     groq_api_key: str | None = Field(default=None, alias="GROQ_API_KEY")
+    groq_base_url: str = Field(default="https://api.groq.com/openai/v1", alias="GROQ_BASE_URL")
+    ollama_base_url: str = Field(default="http://localhost:11434/v1", alias="OLLAMA_BASE_URL")
 
     upload_dir: str = Field(default="/app/uploads", alias="UPLOAD_DIR")
     max_upload_size_mb: int = Field(default=5, alias="MAX_UPLOAD_SIZE_MB")
