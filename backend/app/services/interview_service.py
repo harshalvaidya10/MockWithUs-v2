@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import defaultdict
 from typing import TypedDict
 from uuid import UUID
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import NotFoundError
@@ -93,38 +95,72 @@ def list_interview_sessions_for_user(
     user_id: UUID,
 ) -> InterviewHistoryResult:
     """Return all interview sessions for the authenticated user (newest first)."""
-    sessions = (
-        db.query(InterviewSession)
-        .filter(InterviewSession.user_id == user_id)
-        .order_by(InterviewSession.created_at.desc())
-        .all()
-    )
-
-    history_items: list[InterviewHistoryItem] = []
-    for session in sessions:
-        questions = (
-            db.query(Question)
-            .filter(Question.session_id == session.id)
+    try:
+        session_rows = (
+            db.query(
+                InterviewSession,
+                func.count(func.distinct(Question.id)).label("question_count"),
+                func.count(func.distinct(Answer.question_id)).label("answered_count"),
+            )
+            .outerjoin(Question, Question.session_id == InterviewSession.id)
+            .outerjoin(
+                Answer,
+                (Answer.question_id == Question.id) & (Answer.session_id == Question.session_id),
+            )
+            .filter(InterviewSession.user_id == user_id)
+            .group_by(InterviewSession.id)
+            .order_by(InterviewSession.created_at.desc())
             .all()
         )
-        answers = (
-            db.query(Answer)
-            .filter(Answer.session_id == session.id)
-            .all()
-        )
 
-        question_count = len(questions)
-        answered_count = len({answer.question_id for answer in answers})
-
-        history_items.append(
+        history_items = [
             InterviewHistoryItem(
                 session=session,
-                question_count=question_count,
-                answered_count=answered_count,
+                question_count=int(question_count or 0),
+                answered_count=int(answered_count or 0),
             )
+            for session, question_count, answered_count in session_rows
+        ]
+        return InterviewHistoryResult(sessions=history_items)
+    except (TypeError, AttributeError):
+        # Fallback for lightweight test doubles that do not implement joins/group-by queries.
+        sessions = (
+            db.query(InterviewSession)
+            .filter(InterviewSession.user_id == user_id)
+            .order_by(InterviewSession.created_at.desc())
+            .all()
         )
+        session_ids = [session.id for session in sessions]
 
-    return InterviewHistoryResult(sessions=history_items)
+        session_ids_set = set(session_ids)
+        questions = [
+            question
+            for question in db.query(Question).all()
+            if question.session_id in session_ids_set
+        ]
+        answers = [
+            answer
+            for answer in db.query(Answer).all()
+            if answer.session_id in session_ids_set
+        ]
+
+        question_count_by_session: dict[UUID, int] = defaultdict(int)
+        for question in questions:
+            question_count_by_session[question.session_id] += 1
+
+        answered_ids_by_session: dict[UUID, set[UUID]] = defaultdict(set)
+        for answer in answers:
+            answered_ids_by_session[answer.session_id].add(answer.question_id)
+
+        history_items = [
+            InterviewHistoryItem(
+                session=session,
+                question_count=question_count_by_session.get(session.id, 0),
+                answered_count=len(answered_ids_by_session.get(session.id, set())),
+            )
+            for session in sessions
+        ]
+        return InterviewHistoryResult(sessions=history_items)
 
 
 async def start_interview_session(

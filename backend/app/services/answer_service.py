@@ -147,17 +147,7 @@ async def submit_audio_answer(
     _validate_audio_content_type(audio)
     extension = _resolve_audio_extension(audio)
 
-    audio_bytes = await audio.read()
-    await audio.close()
-    if not audio_bytes:
-        raise AnswerValidationError("Audio file is empty.")
-
     max_size_bytes = settings.max_answer_audio_size_mb * 1024 * 1024
-    if len(audio_bytes) > max_size_bytes:
-        raise AnswerValidationError(
-            f"Audio file exceeds {settings.max_answer_audio_size_mb} MB limit."
-        )
-
     answers_dir = _answers_upload_dir() / str(session_id)
     answers_dir.mkdir(parents=True, exist_ok=True)
 
@@ -165,7 +155,34 @@ async def submit_audio_answer(
     absolute_audio_path = answers_dir / generated_name
     relative_audio_path = str(Path("answers") / str(session_id) / generated_name)
 
-    await asyncio.to_thread(absolute_audio_path.write_bytes, audio_bytes)
+    bytes_written = 0
+    chunk_size = 1024 * 1024
+    try:
+        with absolute_audio_path.open("wb") as destination:
+            while True:
+                chunk = await audio.read(chunk_size)
+                if not chunk:
+                    break
+
+                bytes_written += len(chunk)
+                if bytes_written > max_size_bytes:
+                    raise AnswerValidationError(
+                        f"Audio file exceeds {settings.max_answer_audio_size_mb} MB limit."
+                    )
+
+                destination.write(chunk)
+    except AnswerValidationError:
+        absolute_audio_path.unlink(missing_ok=True)
+        raise
+    except Exception as exc:
+        absolute_audio_path.unlink(missing_ok=True)
+        raise RuntimeError("Could not process uploaded audio file.") from exc
+    finally:
+        await audio.close()
+
+    if bytes_written == 0:
+        absolute_audio_path.unlink(missing_ok=True)
+        raise AnswerValidationError("Audio file is empty.")
 
     try:
         transcript_text = await asyncio.to_thread(transcribe_audio_file, str(absolute_audio_path))
@@ -206,13 +223,16 @@ async def submit_audio_answer(
         if session.completed_at is None:
             session.completed_at = datetime.now(timezone.utc)
 
+    committed = False
     try:
         db.add(answer)
         db.commit()
+        committed = True
         db.refresh(answer)
     except Exception as exc:
         db.rollback()
-        absolute_audio_path.unlink(missing_ok=True)
+        if not committed:
+            absolute_audio_path.unlink(missing_ok=True)
         logger.exception(
             "Failed to persist audio answer (session_id=%s, question_id=%s, user_id=%s)",
             session_id,
