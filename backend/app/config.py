@@ -38,6 +38,10 @@ class Settings(BaseSettings):
 
     upload_dir: str = Field(default="/app/uploads", alias="UPLOAD_DIR")
     max_upload_size_mb: int = Field(default=5, alias="MAX_UPLOAD_SIZE_MB")
+    max_answer_audio_size_mb: int = Field(default=10, alias="MAX_ANSWER_AUDIO_SIZE_MB")
+    transcription_model_size: str = Field(default="base", alias="TRANSCRIPTION_MODEL_SIZE")
+    transcription_device: str = Field(default="cpu", alias="TRANSCRIPTION_DEVICE")
+    transcription_compute_type: str = Field(default="int8", alias="TRANSCRIPTION_COMPUTE_TYPE")
     cors_origins: List[str] = Field(default_factory=lambda: ["http://localhost:3000"], alias="CORS_ORIGINS")
 
     model_config = SettingsConfigDict(

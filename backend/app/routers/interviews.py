@@ -9,8 +9,18 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import NotFoundError
 from app.core.security import get_current_user, get_db
 from app.models.user import User
-from app.schemas.interview import SessionCreate, SessionStartOut, SessionStartQuestionOut
-from app.services.interview_service import get_interview_session_for_user, start_interview_session
+from app.schemas.interview import (
+    SessionCreate,
+    SessionHistoryItemOut,
+    SessionHistoryListOut,
+    SessionStartOut,
+    SessionStartQuestionOut,
+)
+from app.services.interview_service import (
+    get_interview_session_for_user,
+    list_interview_sessions_for_user,
+    start_interview_session,
+)
 
 router = APIRouter(prefix="/interviews", tags=["interviews"])
 logger = logging.getLogger(__name__)
@@ -48,6 +58,44 @@ async def start_interview(
         match_score=result["session"].match_score or 0.0,
         match_summary=result["session"].match_summary or "",
         questions=[SessionStartQuestionOut.model_validate(question) for question in result["questions"]],
+    )
+
+
+@router.get("", response_model=SessionHistoryListOut)
+def list_interview_sessions(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SessionHistoryListOut:
+    """List interview sessions for the authenticated user."""
+    try:
+        result = list_interview_sessions_for_user(
+            db=db,
+            user_id=current_user.id,
+        )
+    except Exception as exc:
+        logger.exception("Unexpected error while listing interviews for user %s", current_user.id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not load interview history.",
+        ) from exc
+
+    return SessionHistoryListOut(
+        sessions=[
+            SessionHistoryItemOut(
+                session_id=item["session"].id,
+                resume_id=item["session"].resume_id,
+                job_id=item["session"].job_id,
+                status=item["session"].status,
+                match_score=item["session"].match_score,
+                match_summary=item["session"].match_summary,
+                question_count=item["question_count"],
+                answered_count=item["answered_count"],
+                is_complete=item["question_count"] > 0 and item["answered_count"] >= item["question_count"],
+                created_at=item["session"].created_at,
+                completed_at=item["session"].completed_at,
+            )
+            for item in result["sessions"]
+        ]
     )
 
 

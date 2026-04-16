@@ -8,6 +8,7 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import NotFoundError
+from app.models.answer import Answer
 from app.models.interview import InterviewSession
 from app.models.job import JobDescription
 from app.models.question import Question
@@ -24,6 +25,16 @@ QUESTION_GENERATION_TIMEOUT_SECONDS = 60
 class InterviewStartResult(TypedDict):
     session: InterviewSession
     questions: list[Question]
+
+
+class InterviewHistoryItem(TypedDict):
+    session: InterviewSession
+    question_count: int
+    answered_count: int
+
+
+class InterviewHistoryResult(TypedDict):
+    sessions: list[InterviewHistoryItem]
 
 
 def _get_resume_for_user(db: Session, *, resume_id: UUID, user_id: UUID) -> Resume | None:
@@ -74,6 +85,46 @@ def get_interview_session_for_user(
     ordered_questions = sorted(questions, key=lambda question: question.order_index)
 
     return InterviewStartResult(session=session, questions=ordered_questions)
+
+
+def list_interview_sessions_for_user(
+    *,
+    db: Session,
+    user_id: UUID,
+) -> InterviewHistoryResult:
+    """Return all interview sessions for the authenticated user (newest first)."""
+    sessions = (
+        db.query(InterviewSession)
+        .filter(InterviewSession.user_id == user_id)
+        .order_by(InterviewSession.created_at.desc())
+        .all()
+    )
+
+    history_items: list[InterviewHistoryItem] = []
+    for session in sessions:
+        questions = (
+            db.query(Question)
+            .filter(Question.session_id == session.id)
+            .all()
+        )
+        answers = (
+            db.query(Answer)
+            .filter(Answer.session_id == session.id)
+            .all()
+        )
+
+        question_count = len(questions)
+        answered_count = len({answer.question_id for answer in answers})
+
+        history_items.append(
+            InterviewHistoryItem(
+                session=session,
+                question_count=question_count,
+                answered_count=answered_count,
+            )
+        )
+
+    return InterviewHistoryResult(sessions=history_items)
 
 
 async def start_interview_session(

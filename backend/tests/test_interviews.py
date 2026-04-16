@@ -15,6 +15,7 @@ from app.models.job import JobDescription
 from app.models.question import Question
 from app.models.resume import Resume
 from app.models.user import User
+from app.models.answer import Answer
 
 
 client = TestClient(app)
@@ -80,6 +81,20 @@ class _FakeQuery:
     def filter(self, *conditions: object) -> _FakeQuery:
         for condition in conditions:
             self._results = [obj for obj in self._results if self._matches_condition(obj, condition)]
+        return self
+
+    def order_by(self, *columns: object) -> _FakeQuery:
+        if not columns:
+            return self
+
+        first_column = columns[0]
+        attr_name = getattr(first_column, "name", None)
+        if attr_name is None:
+            attr_name = getattr(getattr(first_column, "element", None), "name", None)
+
+        if attr_name is not None:
+            reverse = bool(getattr(first_column, "modifier", None))
+            self._results.sort(key=lambda obj: getattr(obj, attr_name, None), reverse=reverse)
         return self
 
     def first(self) -> object | None:
@@ -176,6 +191,28 @@ def _seed_session_with_questions(
         questions.append(question)
 
     return session, questions
+
+
+def _seed_answers(
+    db: FakeSession,
+    *,
+    session_id: UUID,
+    question_ids: list[UUID],
+) -> list[Answer]:
+    answers: list[Answer] = []
+    for question_id in question_ids:
+        answer = Answer(
+            session_id=session_id,
+            question_id=question_id,
+            answer_text="sample answer",
+            transcript_text="sample answer",
+            audio_file_path=None,
+        )
+        answer.id = uuid4()
+        answer.created_at = datetime.now(timezone.utc)
+        db.add(answer)
+        answers.append(answer)
+    return answers
 
 
 @pytest.fixture()
@@ -321,3 +358,63 @@ def test_get_interview_session_returns_404_for_missing_session(auth_context: dic
     response = client.get(f"/interviews/{missing_session_id}")
     assert response.status_code == 404
     assert response.json()["detail"] == "Interview session not found."
+
+
+def test_list_interview_sessions_returns_history_with_progress(auth_context: dict) -> None:
+    """GET /interviews should return previous sessions with answered/question counts."""
+    fake_db = auth_context["db"]
+    user = auth_context["user"]
+
+    assert isinstance(fake_db, FakeSession)
+    assert isinstance(user, User)
+
+    resume = _seed_resume(fake_db, user_id=user.id)
+    job = _seed_job(fake_db, user_id=user.id)
+
+    first_session, first_questions = _seed_session_with_questions(
+        fake_db,
+        user_id=user.id,
+        resume_id=resume.id,
+        job_id=job.id,
+    )
+    first_session.status = "completed"
+    first_session.completed_at = datetime.now(timezone.utc)
+    _seed_answers(
+        fake_db,
+        session_id=first_session.id,
+        question_ids=[question.id for question in first_questions],
+    )
+
+    second_session, second_questions = _seed_session_with_questions(
+        fake_db,
+        user_id=user.id,
+        resume_id=resume.id,
+        job_id=job.id,
+    )
+    second_session.status = "ready"
+    _seed_answers(
+        fake_db,
+        session_id=second_session.id,
+        question_ids=[question.id for question in second_questions[:3]],
+    )
+
+    response = client.get("/interviews")
+    assert response.status_code == 200
+
+    payload = response.json()
+    sessions = payload["sessions"]
+    assert len(sessions) == 2
+
+    session_by_id = {item["session_id"]: item for item in sessions}
+
+    completed_item = session_by_id[str(first_session.id)]
+    assert completed_item["status"] == "completed"
+    assert completed_item["question_count"] == 8
+    assert completed_item["answered_count"] == 8
+    assert completed_item["is_complete"] is True
+
+    in_progress_item = session_by_id[str(second_session.id)]
+    assert in_progress_item["status"] == "ready"
+    assert in_progress_item["question_count"] == 8
+    assert in_progress_item["answered_count"] == 3
+    assert in_progress_item["is_complete"] is False

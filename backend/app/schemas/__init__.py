@@ -1,3 +1,4 @@
+from app.schemas.answer import AudioAnswerOut, SessionAnswerItemOut, SessionAnswerListOut
 from app.schemas.auth import (
     CurrentUserResponse,
     LoginRequest,
@@ -11,6 +12,8 @@ from app.schemas.evaluation import EvalOut, FeedbackOut
 from app.schemas.interview import (
     QuestionOut,
     SessionCreate,
+    SessionHistoryItemOut,
+    SessionHistoryListOut,
     SessionOut,
     SessionStartOut,
     SessionStartQuestionOut,
@@ -18,6 +21,7 @@ from app.schemas.interview import (
 from app.schemas.resume import ResumeOut, ResumeUploadResponse
 
 __all__ = [
+    "AudioAnswerOut",
     "EvalOut",
     "FeedbackOut",
     "CurrentUserResponse",
@@ -25,7 +29,11 @@ __all__ = [
     "QuestionOut",
     "ResumeOut",
     "ResumeUploadResponse",
+    "SessionAnswerItemOut",
+    "SessionAnswerListOut",
     "SessionCreate",
+    "SessionHistoryItemOut",
+    "SessionHistoryListOut",
     "SessionOut",
     "SessionStartOut",
     "SessionStartQuestionOut",
