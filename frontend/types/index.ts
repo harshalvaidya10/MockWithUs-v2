@@ -98,3 +98,42 @@ export interface InterviewStartResponse {
   match_summary: string;
   questions: InterviewStartQuestion[];
 }
+
+export interface SessionAnswerItem {
+  answer_id: string;
+  session_id: string;
+  question_id: string;
+  transcript_text: string | null;
+  created_at: string;
+}
+
+export interface SessionAnswerListResponse {
+  session_id: string;
+  answers: SessionAnswerItem[];
+}
+
+export interface AudioAnswerSubmissionResponse {
+  answer_id: string;
+  session_id: string;
+  question_id: string;
+  transcript_text: string;
+  created_at: string;
+}
+
+export interface InterviewHistoryItem {
+  session_id: string;
+  resume_id: string | null;
+  job_id: string | null;
+  status: string;
+  match_score: number | null;
+  match_summary: string | null;
+  question_count: number;
+  answered_count: number;
+  is_complete: boolean;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export interface InterviewHistoryResponse {
+  sessions: InterviewHistoryItem[];
+}

@@ -62,3 +62,25 @@ class SessionStartOut(BaseModel):
     match_score: float = Field(ge=0.0, le=1.0)
     match_summary: str
     questions: list[SessionStartQuestionOut]
+
+
+class SessionHistoryItemOut(BaseModel):
+    """Interview session summary item for dashboard history views."""
+
+    session_id: UUID
+    resume_id: UUID | None
+    job_id: UUID | None
+    status: str
+    match_score: float | None
+    match_summary: str | None
+    question_count: int = Field(ge=0)
+    answered_count: int = Field(ge=0)
+    is_complete: bool
+    created_at: datetime
+    completed_at: datetime | None
+
+
+class SessionHistoryListOut(BaseModel):
+    """Response contract for listing a user's interview sessions."""
+
+    sessions: list[SessionHistoryItemOut]

@@ -1,4 +1,5 @@
 import { getAccessToken, clearAccessToken } from "@/lib/auth";
+import type { InterviewHistoryResponse } from "@/types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -78,4 +79,8 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
     }
     throw error;
   }
+}
+
+export async function getInterviewHistory(): Promise<InterviewHistoryResponse> {
+  return apiRequest<InterviewHistoryResponse>("/interviews");
 }
