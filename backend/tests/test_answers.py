@@ -142,14 +142,17 @@ def auth_context(tmp_path: Path):
     app.dependency_overrides[get_current_user] = override_get_current_user
 
     original_settings = answer_service_module.settings
+    original_schedule_background_evaluation = answer_service_module._schedule_background_evaluation
     answer_service_module.settings = SimpleNamespace(
         upload_dir=str(tmp_path / "uploads"),
         max_answer_audio_size_mb=10,
     )
+    answer_service_module._schedule_background_evaluation = lambda **_: None
 
     yield {"db": fake_db, "user": user, "tmp_path": tmp_path}
 
     answer_service_module.settings = original_settings
+    answer_service_module._schedule_background_evaluation = original_schedule_background_evaluation
     app.dependency_overrides.clear()
 
 
@@ -188,7 +191,7 @@ def test_submit_audio_answer_success_persists_transcript_and_audio_path(
     saved_answers = fake_db.query(Answer).filter(Answer.session_id == session.id).all()
     assert len(saved_answers) == 1
     saved_answer = saved_answers[0]
-    assert saved_answer.answer_text == "This is my spoken answer."
+    assert saved_answer.answer_text is None
     assert saved_answer.transcript_text == "This is my spoken answer."
     assert isinstance(saved_answer.audio_file_path, str)
     assert saved_answer.audio_file_path.startswith(f"answers/{session.id}/")

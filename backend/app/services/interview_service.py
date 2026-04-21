@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import defaultdict
+from datetime import datetime, timezone
 from typing import TypedDict
 from uuid import UUID
 
@@ -87,6 +88,44 @@ def get_interview_session_for_user(
     ordered_questions = sorted(questions, key=lambda question: question.order_index)
 
     return InterviewStartResult(session=session, questions=ordered_questions)
+
+
+def complete_interview_session_for_user(
+    *,
+    db: Session,
+    user_id: UUID,
+    session_id: UUID,
+) -> InterviewSession:
+    """Mark an interview session as completed by the owning user."""
+    session = (
+        db.query(InterviewSession)
+        .filter(
+            InterviewSession.id == session_id,
+            InterviewSession.user_id == user_id,
+        )
+        .first()
+    )
+    if session is None:
+        raise NotFoundError("Interview session not found.")
+
+    if session.status != "completed":
+        session.status = "completed"
+        if session.completed_at is None:
+            session.completed_at = datetime.now(timezone.utc)
+
+        try:
+            db.commit()
+            db.refresh(session)
+        except Exception as exc:
+            db.rollback()
+            logger.exception(
+                "Failed to mark interview session %s as completed for user %s",
+                session_id,
+                user_id,
+            )
+            raise RuntimeError("Could not complete interview session.") from exc
+
+    return session
 
 
 def list_interview_sessions_for_user(

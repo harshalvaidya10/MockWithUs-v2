@@ -13,9 +13,11 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.core.exceptions import NotFoundError
+from app.database import SessionLocal
 from app.models.answer import Answer
 from app.models.interview import InterviewSession
 from app.models.question import Question
+from app.services.evaluator import evaluate_session
 from app.services.transcription_service import TranscriptionError, TranscriptionInputError, transcribe_audio_file
 
 
@@ -96,6 +98,25 @@ def _get_session(db: Session, session_id: UUID) -> InterviewSession | None:
 
 def _get_question(db: Session, question_id: UUID) -> Question | None:
     return db.query(Question).filter(Question.id == question_id).first()
+
+
+async def _run_background_evaluation(*, user_id: UUID, session_id: UUID) -> None:
+    db = SessionLocal()
+    try:
+        await evaluate_session(
+            db=db,
+            user_id=user_id,
+            session_id=session_id,
+        )
+    except Exception:
+        logger.exception("Background evaluation failed for session %s", session_id)
+    finally:
+        db.close()
+
+
+def _schedule_background_evaluation(*, user_id: UUID, session_id: UUID) -> None:
+    logger.info("Background evaluation started for session %s", session_id)
+    asyncio.create_task(_run_background_evaluation(user_id=user_id, session_id=session_id))
 
 
 def list_answers_for_session(
@@ -199,7 +220,7 @@ async def submit_audio_answer(
     answer = Answer(
         session_id=session_id,
         question_id=question_id,
-        answer_text=transcript_text,
+        answer_text=None,
         transcript_text=transcript_text,
         audio_file_path=relative_audio_path,
     )
@@ -217,10 +238,13 @@ async def submit_audio_answer(
     answered_question_ids = {saved_answer.question_id for saved_answer in session_answers}
     answered_question_ids.add(question_id)
 
+    should_start_background_evaluation = False
     is_now_complete = bool(session_questions) and len(answered_question_ids) >= len(session_questions)
     if is_now_complete:
+        should_start_background_evaluation = session.status != "completed"
         session.status = "completed"
         if session.completed_at is None:
+            should_start_background_evaluation = True
             session.completed_at = datetime.now(timezone.utc)
 
     committed = False
@@ -229,6 +253,11 @@ async def submit_audio_answer(
         db.commit()
         committed = True
         db.refresh(answer)
+        if should_start_background_evaluation:
+            _schedule_background_evaluation(
+                user_id=user_id,
+                session_id=session_id,
+            )
     except Exception as exc:
         db.rollback()
         if not committed:
