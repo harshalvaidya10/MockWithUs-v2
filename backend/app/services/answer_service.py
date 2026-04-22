@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import uuid
+from concurrent.futures import (
+    CancelledError as ConcurrentCancelledError,
+    Future as ConcurrentFuture,
+    TimeoutError as ConcurrentTimeoutError,
+)
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TypedDict
@@ -13,14 +19,21 @@ from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.core.exceptions import NotFoundError
+from app.database import SessionLocal
 from app.models.answer import Answer
 from app.models.interview import InterviewSession
 from app.models.question import Question
+from app.services.evaluator import evaluate_session
 from app.services.transcription_service import TranscriptionError, TranscriptionInputError, transcribe_audio_file
 
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+_BG_EVAL_TASKS: set[asyncio.Task[None]] = set()
+_BG_EVAL_THREADSAFE_FUTURES: set[ConcurrentFuture[None]] = set()
+_BG_EVAL_TRACKING_LOCK = threading.Lock()
+_BG_EVAL_LOOP: asyncio.AbstractEventLoop | None = None
+_BG_EVAL_LOOP_LOCK = threading.Lock()
 
 ALLOWED_AUDIO_EXTENSIONS = {".wav", ".mp3", ".m4a", ".ogg", ".webm"}
 ALLOWED_AUDIO_CONTENT_TYPES = {
@@ -96,6 +109,172 @@ def _get_session(db: Session, session_id: UUID) -> InterviewSession | None:
 
 def _get_question(db: Session, question_id: UUID) -> Question | None:
     return db.query(Question).filter(Question.id == question_id).first()
+
+
+def _claim_session_completion_transition(*, db: Session, session_id: UUID) -> bool:
+    """Atomically mark a session completed and return True only for first transition."""
+    completed_at = datetime.now(timezone.utc)
+    try:
+        rows_updated = (
+            db.query(InterviewSession)
+            .filter(
+                InterviewSession.id == session_id,
+                InterviewSession.status != "completed",
+            )
+            .update(
+                {
+                    InterviewSession.status: "completed",
+                    InterviewSession.completed_at: completed_at,
+                },
+                synchronize_session=False,
+            )
+        )
+        return bool(rows_updated)
+    except (AttributeError, TypeError):
+        # Fallback for lightweight test doubles without Query.update support.
+        session = _get_session(db, session_id)
+        if session is None:
+            return False
+        if session.status == "completed":
+            if session.completed_at is None:
+                session.completed_at = completed_at
+            return False
+        session.status = "completed"
+        session.completed_at = completed_at
+        return True
+
+
+def configure_background_evaluation_loop(loop: asyncio.AbstractEventLoop) -> None:
+    """Store the application's primary event loop for cross-thread scheduling."""
+    global _BG_EVAL_LOOP
+    with _BG_EVAL_LOOP_LOCK:
+        _BG_EVAL_LOOP = loop
+
+
+async def _run_background_evaluation(*, user_id: UUID, session_id: UUID) -> None:
+    db = SessionLocal()
+    try:
+        await evaluate_session(
+            db=db,
+            user_id=user_id,
+            session_id=session_id,
+        )
+    except Exception:
+        logger.exception("Background evaluation failed for session %s", session_id)
+    finally:
+        db.close()
+
+
+def _track_background_task(task: asyncio.Task[None], *, session_id: UUID) -> None:
+    with _BG_EVAL_TRACKING_LOCK:
+        _BG_EVAL_TASKS.add(task)
+
+    def _cleanup(done_task: asyncio.Task[None]) -> None:
+        with _BG_EVAL_TRACKING_LOCK:
+            _BG_EVAL_TASKS.discard(done_task)
+        try:
+            done_task.result()
+        except asyncio.CancelledError:
+            logger.info("Background evaluation task canceled for session %s", session_id)
+        except Exception:
+            logger.exception("Background evaluation job crashed for session %s", session_id)
+
+    task.add_done_callback(_cleanup)
+
+
+def _track_background_threadsafe_future(future: ConcurrentFuture[None], *, session_id: UUID) -> None:
+    with _BG_EVAL_TRACKING_LOCK:
+        _BG_EVAL_THREADSAFE_FUTURES.add(future)
+
+    def _cleanup(done_future: ConcurrentFuture[None]) -> None:
+        with _BG_EVAL_TRACKING_LOCK:
+            _BG_EVAL_THREADSAFE_FUTURES.discard(done_future)
+        try:
+            done_future.result()
+        except ConcurrentCancelledError:
+            logger.info("Background evaluation future canceled for session %s", session_id)
+        except Exception:
+            logger.exception("Background evaluation future crashed for session %s", session_id)
+
+    future.add_done_callback(_cleanup)
+
+
+def _schedule_background_evaluation(*, user_id: UUID, session_id: UUID) -> None:
+    logger.info("Background evaluation started for session %s", session_id)
+    with _BG_EVAL_LOOP_LOCK:
+        target_loop = _BG_EVAL_LOOP
+
+    try:
+        current_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        current_loop = None
+
+    if current_loop is not None and target_loop is None:
+        task = current_loop.create_task(
+            _run_background_evaluation(user_id=user_id, session_id=session_id)
+        )
+        _track_background_task(task, session_id=session_id)
+        return
+
+    if current_loop is not None and current_loop is target_loop:
+        task = current_loop.create_task(
+            _run_background_evaluation(user_id=user_id, session_id=session_id)
+        )
+        _track_background_task(task, session_id=session_id)
+        return
+
+    if target_loop is None or target_loop.is_closed():
+        logger.error(
+            "Background evaluation loop is unavailable; skipping schedule "
+            "(session_id=%s, user_id=%s)",
+            session_id,
+            user_id,
+        )
+        return
+
+    future = asyncio.run_coroutine_threadsafe(
+        _run_background_evaluation(user_id=user_id, session_id=session_id),
+        target_loop,
+    )
+    _track_background_threadsafe_future(future, session_id=session_id)
+
+
+def _wait_for_threadsafe_futures(futures: list[ConcurrentFuture[None]], timeout_seconds: float) -> None:
+    for future in futures:
+        try:
+            future.result(timeout=timeout_seconds)
+        except ConcurrentCancelledError:
+            continue
+        except ConcurrentTimeoutError:
+            logger.warning("Timed out waiting for background evaluation future during shutdown.")
+        except Exception:
+            logger.exception("Background evaluation future failed while shutting down.")
+
+
+async def shutdown_background_evaluation_scheduler(*, timeout_seconds: float = 5.0) -> None:
+    """Cancel/await tracked background jobs and detach from app loop."""
+    global _BG_EVAL_LOOP
+    with _BG_EVAL_TRACKING_LOCK:
+        tasks = list(_BG_EVAL_TASKS)
+        futures = list(_BG_EVAL_THREADSAFE_FUTURES)
+
+    for future in futures:
+        future.cancel()
+    for task in tasks:
+        task.cancel()
+
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    if futures:
+        await asyncio.to_thread(_wait_for_threadsafe_futures, futures, timeout_seconds)
+
+    with _BG_EVAL_TRACKING_LOCK:
+        _BG_EVAL_TASKS.clear()
+        _BG_EVAL_THREADSAFE_FUTURES.clear()
+
+    with _BG_EVAL_LOOP_LOCK:
+        _BG_EVAL_LOOP = None
 
 
 def list_answers_for_session(
@@ -199,7 +378,7 @@ async def submit_audio_answer(
     answer = Answer(
         session_id=session_id,
         question_id=question_id,
-        answer_text=transcript_text,
+        answer_text=None,
         transcript_text=transcript_text,
         audio_file_path=relative_audio_path,
     )
@@ -217,11 +396,13 @@ async def submit_audio_answer(
     answered_question_ids = {saved_answer.question_id for saved_answer in session_answers}
     answered_question_ids.add(question_id)
 
+    should_start_background_evaluation = False
     is_now_complete = bool(session_questions) and len(answered_question_ids) >= len(session_questions)
     if is_now_complete:
-        session.status = "completed"
-        if session.completed_at is None:
-            session.completed_at = datetime.now(timezone.utc)
+        should_start_background_evaluation = _claim_session_completion_transition(
+            db=db,
+            session_id=session_id,
+        )
 
     committed = False
     try:
@@ -240,5 +421,20 @@ async def submit_audio_answer(
             user_id,
         )
         raise RuntimeError("Could not save the transcribed answer.") from exc
+
+    if should_start_background_evaluation:
+        try:
+            _schedule_background_evaluation(
+                user_id=user_id,
+                session_id=session_id,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to schedule background evaluation after saving answer "
+                "(session_id=%s, question_id=%s, user_id=%s)",
+                session_id,
+                question_id,
+                user_id,
+            )
 
     return AudioAnswerResult(answer=answer)

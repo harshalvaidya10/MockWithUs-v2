@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 from types import SimpleNamespace
 from typing import Any
 
@@ -16,10 +17,16 @@ def _make_settings(
     model: str = "qwen/qwen3-32b",
     groq_api_key: str | None = "gsk-test",
     openrouter_api_key: str | None = "sk-or-test",
+    fallback_provider: str | None = None,
+    fallback_model: str | None = None,
+    retry_jitter_seconds: float = 0.0,
 ) -> SimpleNamespace:
     return SimpleNamespace(
         llm_provider=provider,
         llm_model=model,
+        llm_fallback_provider=fallback_provider,
+        llm_fallback_model=fallback_model,
+        llm_retry_jitter_seconds=retry_jitter_seconds,
         groq_api_key=groq_api_key,
         groq_base_url="https://api.groq.com/openai/v1",
         openrouter_api_key=openrouter_api_key,
@@ -66,7 +73,7 @@ class _FakeAsyncClient:
         return None
 
     async def post(self, url: str, *, headers: dict[str, str], json: dict[str, Any]) -> _FakeResponse:
-        self.calls.append({"url": url, "headers": headers, "json": json})
+        self.calls.append({"url": url, "headers": copy.deepcopy(headers), "json": copy.deepcopy(json)})
         index = len(self.calls) - 1
         if index >= len(self._responses):
             index = len(self._responses) - 1
@@ -193,3 +200,189 @@ def test_call_llm_requires_api_key_for_groq(monkeypatch: pytest.MonkeyPatch) -> 
                 temperature=0.7,
             )
         )
+
+
+def test_retry_after_delay_seconds_parses_numeric() -> None:
+    request = httpx.Request("POST", "https://test.local/chat/completions")
+    response = httpx.Response(429, request=request, headers={"Retry-After": "3.5"})
+    assert llm_client.retry_after_delay_seconds(response) == pytest.approx(3.5)
+
+
+def test_call_llm_respects_retry_after_header(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(llm_client, "settings", _make_settings(provider="groq"))
+
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+
+    monkeypatch.setattr(llm_client.asyncio, "sleep", fake_sleep)
+
+    factory = _AsyncClientFactory(
+        [
+            _FakeResponse(429, headers={"Retry-After": "5"}),
+            _FakeResponse(
+                200,
+                payload={"choices": [{"message": {"content": '{"ok": true}'}}]},
+            ),
+        ]
+    )
+    monkeypatch.setattr(llm_client.httpx, "AsyncClient", factory)
+
+    response_text = asyncio.run(
+        llm_client.call_llm(
+            messages=[{"role": "user", "content": "test"}],
+            temperature=0.2,
+        )
+    )
+
+    assert response_text == '{"ok": true}'
+    assert sleep_calls == [5.0]
+
+
+def test_call_llm_includes_response_format_in_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(llm_client, "settings", _make_settings(provider="groq"))
+
+    factory = _AsyncClientFactory(
+        [
+            _FakeResponse(
+                200,
+                payload={"choices": [{"message": {"content": '{"value": 1}'}}]},
+            ),
+        ]
+    )
+    monkeypatch.setattr(llm_client.httpx, "AsyncClient", factory)
+
+    asyncio.run(
+        llm_client.call_llm(
+            messages=[{"role": "user", "content": "test"}],
+            temperature=0.1,
+            response_format={"type": "json_object"},
+        )
+    )
+
+    assert len(factory.instances) == 1
+    assert len(factory.instances[0].calls) == 1
+    payload = factory.instances[0].calls[0]["json"]
+    assert payload["response_format"] == {"type": "json_object"}
+
+
+def test_call_llm_retries_without_response_format_on_400(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(llm_client, "settings", _make_settings(provider="groq"))
+
+    factory = _AsyncClientFactory(
+        [
+            _FakeResponse(400),
+            _FakeResponse(
+                200,
+                payload={"choices": [{"message": {"content": '{"value": 2}'}}]},
+            ),
+        ]
+    )
+    monkeypatch.setattr(llm_client.httpx, "AsyncClient", factory)
+
+    response_text = asyncio.run(
+        llm_client.call_llm(
+            messages=[{"role": "user", "content": "test"}],
+            temperature=0.1,
+            response_format={"type": "json_object"},
+        )
+    )
+
+    assert response_text == '{"value": 2}'
+    assert len(factory.instances) == 1
+    assert len(factory.instances[0].calls) == 2
+    first_payload = factory.instances[0].calls[0]["json"]
+    second_payload = factory.instances[0].calls[1]["json"]
+    assert first_payload["response_format"] == {"type": "json_object"}
+    assert "response_format" not in second_payload
+
+
+def test_call_llm_adds_jitter_to_retry_delay(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        llm_client,
+        "settings",
+        _make_settings(provider="groq", retry_jitter_seconds=0.5),
+    )
+
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+
+    monkeypatch.setattr(llm_client.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(llm_client.random, "uniform", lambda _a, _b: 0.25)
+
+    factory = _AsyncClientFactory(
+        [
+            _FakeResponse(429),
+            _FakeResponse(
+                200,
+                payload={"choices": [{"message": {"content": '{"ok": true}'}}]},
+            ),
+        ]
+    )
+    monkeypatch.setattr(llm_client.httpx, "AsyncClient", factory)
+
+    response_text = asyncio.run(
+        llm_client.call_llm(
+            messages=[{"role": "user", "content": "test"}],
+            temperature=0.2,
+        )
+    )
+
+    assert response_text == '{"ok": true}'
+    assert sleep_calls == [1.25]
+
+
+def test_call_llm_uses_fallback_provider_after_primary_429_exhaustion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        llm_client,
+        "settings",
+        _make_settings(
+            provider="groq",
+            model="qwen/qwen3-32b",
+            fallback_provider="openrouter",
+            fallback_model="anthropic/claude-3.5-sonnet",
+            retry_jitter_seconds=0.0,
+        ),
+    )
+
+    sleep_calls: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleep_calls.append(seconds)
+
+    monkeypatch.setattr(llm_client.asyncio, "sleep", fake_sleep)
+
+    factory = _AsyncClientFactory(
+        [
+            _FakeResponse(429),
+            _FakeResponse(429),
+            _FakeResponse(429),
+            _FakeResponse(429),
+            _FakeResponse(
+                200,
+                payload={"choices": [{"message": {"content": '{"from":"fallback"}'}}]},
+            ),
+        ]
+    )
+    monkeypatch.setattr(llm_client.httpx, "AsyncClient", factory)
+
+    response_text = asyncio.run(
+        llm_client.call_llm(
+            messages=[{"role": "user", "content": "test"}],
+            temperature=0.2,
+        )
+    )
+
+    assert response_text == '{"from":"fallback"}'
+    assert sleep_calls == [1.0, 2.0, 4.0]
+    assert len(factory.instances) == 1
+    assert len(factory.instances[0].calls) == 5
+    primary_call_model = factory.instances[0].calls[0]["json"]["model"]
+    fallback_call_model = factory.instances[0].calls[-1]["json"]["model"]
+    assert primary_call_model == "qwen/qwen3-32b"
+    assert fallback_call_model == "anthropic/claude-3.5-sonnet"

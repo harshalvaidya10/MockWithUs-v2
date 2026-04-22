@@ -17,6 +17,7 @@ from app.schemas.interview import (
     SessionStartQuestionOut,
 )
 from app.services.interview_service import (
+    complete_interview_session_for_user,
     get_interview_session_for_user,
     list_interview_sessions_for_user,
     start_interview_session,
@@ -90,13 +91,50 @@ def list_interview_sessions(
                 match_summary=item["session"].match_summary,
                 question_count=item["question_count"],
                 answered_count=item["answered_count"],
-                is_complete=item["question_count"] > 0 and item["answered_count"] >= item["question_count"],
+                is_complete=(
+                    item["session"].status == "completed"
+                    or (item["question_count"] > 0 and item["answered_count"] >= item["question_count"])
+                ),
                 created_at=item["session"].created_at,
                 completed_at=item["session"].completed_at,
             )
             for item in result["sessions"]
         ]
     )
+
+
+@router.post("/{session_id}/complete", status_code=status.HTTP_200_OK)
+def complete_interview_session(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict[str, str]:
+    """Mark an interview session as completed so users can stop early and view results."""
+    try:
+        complete_interview_session_for_user(
+            db=db,
+            user_id=current_user.id,
+            session_id=session_id,
+        )
+    except NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:
+        logger.exception(
+            "Unexpected error while completing interview session %s for user %s",
+            session_id,
+            current_user.id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not complete interview session.",
+        ) from exc
+
+    return {"status": "completed"}
 
 
 @router.get("/{session_id}", response_model=SessionStartOut)

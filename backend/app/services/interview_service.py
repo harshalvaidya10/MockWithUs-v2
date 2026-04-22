@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import defaultdict
+from datetime import datetime, timezone
 from typing import TypedDict
 from uuid import UUID
 
@@ -16,6 +17,7 @@ from app.models.job import JobDescription
 from app.models.question import Question
 from app.models.resume import Resume
 from app.schemas.interview import SessionCreate
+from app.services.answer_service import _schedule_background_evaluation
 from app.services.matcher import parse_embedding_vector, run_match
 from app.services.question_generator import generate_questions, validate_questions
 
@@ -87,6 +89,59 @@ def get_interview_session_for_user(
     ordered_questions = sorted(questions, key=lambda question: question.order_index)
 
     return InterviewStartResult(session=session, questions=ordered_questions)
+
+
+def complete_interview_session_for_user(
+    *,
+    db: Session,
+    user_id: UUID,
+    session_id: UUID,
+) -> InterviewSession:
+    """Mark an interview session as completed by the owning user."""
+    session = (
+        db.query(InterviewSession)
+        .filter(
+            InterviewSession.id == session_id,
+            InterviewSession.user_id == user_id,
+        )
+        .first()
+    )
+    if session is None:
+        raise NotFoundError("Interview session not found.")
+
+    did_mutate = False
+    if session.status != "completed":
+        session.status = "completed"
+        did_mutate = True
+    if session.completed_at is None:
+        session.completed_at = datetime.now(timezone.utc)
+        did_mutate = True
+
+    if did_mutate:
+        try:
+            db.commit()
+            db.refresh(session)
+        except Exception as exc:
+            db.rollback()
+            logger.exception(
+                "Failed to mark interview session %s as completed for user %s",
+                session_id,
+                user_id,
+            )
+            raise RuntimeError("Could not complete interview session.") from exc
+
+    try:
+        _schedule_background_evaluation(
+            user_id=session.user_id,
+            session_id=session.id,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to schedule background evaluation for completed session %s",
+            session.id,
+        )
+
+    return session
 
 
 def list_interview_sessions_for_user(

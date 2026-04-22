@@ -79,6 +79,7 @@ export default function InterviewSessionPage(): JSX.Element {
   const [recordingSeconds, setRecordingSeconds] = useState(0);
 
   const [isUploading, setIsUploading] = useState(false);
+  const [isQuitting, setIsQuitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [lastTranscript, setLastTranscript] = useState<string | null>(null);
 
@@ -249,7 +250,7 @@ export default function InterviewSessionPage(): JSX.Element {
 
   async function handleStartRecording(): Promise<void> {
     if (!currentQuestion) return;
-    if (isRecording) return;
+    if (isRecording || isQuitting) return;
 
     setRecordingError(null);
     setSubmitError(null);
@@ -330,7 +331,7 @@ export default function InterviewSessionPage(): JSX.Element {
 
   async function handleSubmitAnswer(): Promise<void> {
     if (!sessionId || !currentQuestion) return;
-    if (!recordedBlob || isRecording || isUploading) return;
+    if (!recordedBlob || isRecording || isUploading || isQuitting) return;
 
     setIsUploading(true);
     setSubmitError(null);
@@ -373,6 +374,39 @@ export default function InterviewSessionPage(): JSX.Element {
       setSubmitError(getApiErrorMessage(error, "Could not submit spoken answer. Please try again."));
     } finally {
       setIsUploading(false);
+    }
+  }
+
+  async function handleQuitInterview(): Promise<void> {
+    if (!sessionId || isQuitting || isUploading) return;
+
+    const hasUnsavedRecording = isRecording || Boolean(recordedBlob);
+    const confirmationMessage = hasUnsavedRecording
+      ? "End interview now and evaluate only submitted answers? Unsaved recording for this question will be discarded."
+      : "End interview now and evaluate only submitted answers?";
+    const confirmed = typeof window !== "undefined" ? window.confirm(confirmationMessage) : true;
+    if (!confirmed) return;
+
+    setIsQuitting(true);
+    setSubmitError(null);
+    stopSpeaking();
+    if (isRecording) {
+      stopRecording();
+    }
+    clearRecordingTimer();
+    releaseMicrophone();
+    setRecordedBlob(null);
+    setRecordedMimeType("");
+    setRecordingSeconds(0);
+
+    try {
+      await apiRequest<void>(`/interviews/${sessionId}/complete`, {
+        method: "POST",
+      });
+    } catch (error) {
+      setSubmitError(getApiErrorMessage(error, "Could not mark interview as completed. Showing results anyway."));
+    } finally {
+      router.push(`/interview/results/${sessionId}`);
     }
   }
 
@@ -457,6 +491,16 @@ export default function InterviewSessionPage(): JSX.Element {
               Question {interviewState.currentIndex + 1} of {totalQuestions}
             </p>
             <p className="text-xs text-slate-400">{answeredCount} answered</p>
+            <button
+              type="button"
+              onClick={() => {
+                void handleQuitInterview();
+              }}
+              disabled={isUploading || isQuitting}
+              className="mt-2 rounded-lg border border-red-800 px-3 py-1.5 text-xs font-medium text-red-200 transition hover:bg-red-950/40 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isQuitting ? "Ending interview..." : "Quit Interview"}
+            </button>
           </div>
         </div>
 
@@ -483,6 +527,7 @@ export default function InterviewSessionPage(): JSX.Element {
                   void handlePlayQuestion();
                 }
               }}
+              disabled={isQuitting}
               className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800"
             >
               {isSpeaking ? "Stop Question Audio" : "Play Question Audio"}
@@ -507,7 +552,7 @@ export default function InterviewSessionPage(): JSX.Element {
               onClick={() => {
                 void handleStartRecording();
               }}
-              disabled={isRecording || isUploading}
+              disabled={isRecording || isUploading || isQuitting}
               className="rounded-xl bg-white px-4 py-2.5 text-sm font-medium text-slate-950 transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isRecording ? "Recording..." : recordedBlob ? "Re-record" : "Start Recording"}
@@ -515,7 +560,7 @@ export default function InterviewSessionPage(): JSX.Element {
             <button
               type="button"
               onClick={handleStopRecording}
-              disabled={!isRecording}
+              disabled={!isRecording || isQuitting}
               className="rounded-xl border border-slate-700 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
             >
               Stop Recording
@@ -523,7 +568,7 @@ export default function InterviewSessionPage(): JSX.Element {
             <button
               type="button"
               onClick={handleDiscardRecording}
-              disabled={isRecording || (!recordedBlob && !lastTranscript)}
+              disabled={isQuitting || isRecording || (!recordedBlob && !lastTranscript)}
               className="rounded-xl border border-red-800 px-4 py-2.5 text-sm font-medium text-red-200 transition hover:bg-red-950/40 disabled:cursor-not-allowed disabled:opacity-60"
             >
               Discard
@@ -568,7 +613,7 @@ export default function InterviewSessionPage(): JSX.Element {
               onClick={() => {
                 void handleSubmitAnswer();
               }}
-              disabled={!recordedBlob || isRecording || isUploading}
+              disabled={!recordedBlob || isRecording || isUploading || isQuitting}
               className="rounded-xl bg-white px-5 py-2.5 text-sm font-medium text-slate-950 transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isUploading ? "Uploading & Transcribing..." : "Submit Spoken Answer"}

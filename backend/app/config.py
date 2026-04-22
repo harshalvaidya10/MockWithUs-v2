@@ -29,6 +29,10 @@ class Settings(BaseSettings):
 
     llm_provider: str = Field(default="groq", alias="LLM_PROVIDER")
     llm_model: str = Field(default="qwen/qwen3-32b", alias="LLM_MODEL")
+    llm_fallback_provider: str | None = Field(default=None, alias="LLM_FALLBACK_PROVIDER")
+    llm_fallback_model: str | None = Field(default=None, alias="LLM_FALLBACK_MODEL")
+    llm_retry_jitter_seconds: float = Field(default=0.5, alias="LLM_RETRY_JITTER_SECONDS")
+    llm_eval_max_concurrency: int = Field(default=2, alias="LLM_EVAL_MAX_CONCURRENCY")
     openrouter_api_key: str | None = Field(default=None, alias="OPENROUTER_API_KEY")
     openrouter_base_url: str = Field(default="https://openrouter.ai/api/v1", alias="OPENROUTER_BASE_URL")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
