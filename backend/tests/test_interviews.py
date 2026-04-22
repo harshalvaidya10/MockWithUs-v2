@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 import pytest
 from fastapi.testclient import TestClient
 
+import app.services.interview_service as interview_service_module
 from app.core.security import get_current_user, get_db
 from app.main import app
 from app.models.interview import InterviewSession
@@ -228,8 +229,11 @@ def auth_context():
 
     app.dependency_overrides[get_db] = override_get_db
     app.dependency_overrides[get_current_user] = override_get_current_user
+    original_schedule_background_evaluation = interview_service_module._schedule_background_evaluation
+    interview_service_module._schedule_background_evaluation = lambda **_: None
 
     yield {"db": fake_db, "user": user}
+    interview_service_module._schedule_background_evaluation = original_schedule_background_evaluation
     app.dependency_overrides.clear()
 
 
@@ -459,6 +463,9 @@ def test_complete_interview_session_marks_session_completed(auth_context: dict) 
     session.status = "ready"
     session.completed_at = None
 
+    scheduled_calls: list[dict[str, object]] = []
+    interview_service_module._schedule_background_evaluation = lambda **kwargs: scheduled_calls.append(kwargs)
+
     response = client.post(f"/interviews/{session.id}/complete")
     assert response.status_code == 200
     assert response.json()["status"] == "completed"
@@ -467,3 +474,32 @@ def test_complete_interview_session_marks_session_completed(auth_context: dict) 
     assert isinstance(persisted_session, InterviewSession)
     assert persisted_session.status == "completed"
     assert persisted_session.completed_at is not None
+    assert scheduled_calls == [{"user_id": user.id, "session_id": session.id}]
+
+
+def test_complete_interview_session_schedules_evaluation_even_if_already_completed(auth_context: dict) -> None:
+    """POST /interviews/{session_id}/complete should always trigger background evaluation."""
+    fake_db = auth_context["db"]
+    user = auth_context["user"]
+
+    assert isinstance(fake_db, FakeSession)
+    assert isinstance(user, User)
+
+    resume = _seed_resume(fake_db, user_id=user.id)
+    job = _seed_job(fake_db, user_id=user.id)
+    session, _ = _seed_session_with_questions(
+        fake_db,
+        user_id=user.id,
+        resume_id=resume.id,
+        job_id=job.id,
+    )
+    session.status = "completed"
+    session.completed_at = datetime.now(timezone.utc)
+
+    scheduled_calls: list[dict[str, object]] = []
+    interview_service_module._schedule_background_evaluation = lambda **kwargs: scheduled_calls.append(kwargs)
+
+    response = client.post(f"/interviews/{session.id}/complete")
+    assert response.status_code == 200
+    assert response.json()["status"] == "completed"
+    assert scheduled_calls == [{"user_id": user.id, "session_id": session.id}]

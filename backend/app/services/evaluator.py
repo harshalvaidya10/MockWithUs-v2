@@ -25,6 +25,7 @@ settings = get_settings()
 _TOKEN_PATTERN = re.compile(r"[a-z0-9']+")
 _TRAILING_COMMA_PATTERN = re.compile(r",\s*(?=[}\]])")
 _SESSION_EVALUATION_LOCKS: dict[UUID, asyncio.Lock] = {}
+_SESSION_EVALUATION_LOCKS_LOCK = asyncio.Lock()
 _DEFAULT_EVAL_CONCURRENCY = 2
 
 
@@ -306,12 +307,19 @@ def _extract_json_object(payload: str) -> dict[str, Any]:
     raise ValueError("LLM evaluation response was not valid JSON object.")
 
 
-def _get_session_evaluation_lock(session_id: UUID) -> asyncio.Lock:
-    lock = _SESSION_EVALUATION_LOCKS.get(session_id)
-    if lock is None:
-        lock = asyncio.Lock()
-        _SESSION_EVALUATION_LOCKS[session_id] = lock
-    return lock
+async def _get_session_evaluation_lock(session_id: UUID) -> asyncio.Lock:
+    async with _SESSION_EVALUATION_LOCKS_LOCK:
+        lock = _SESSION_EVALUATION_LOCKS.get(session_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            _SESSION_EVALUATION_LOCKS[session_id] = lock
+        return lock
+
+
+async def _cleanup_session_evaluation_lock(*, session_id: UUID, lock: asyncio.Lock) -> None:
+    async with _SESSION_EVALUATION_LOCKS_LOCK:
+        if _SESSION_EVALUATION_LOCKS.get(session_id) is lock:
+            _SESSION_EVALUATION_LOCKS.pop(session_id, None)
 
 
 def _normalize_score_field(payload: dict[str, Any], key: str) -> float:
@@ -603,107 +611,113 @@ async def evaluate_session(
 ) -> SessionEvaluationResult:
     """Evaluate pending answers for a session and persist new evaluation rows."""
     session = _validate_session_access(db=db, user_id=user_id, session_id=session_id)
-
-    async with _get_session_evaluation_lock(session_id):
-        answers = (
-            db.query(Answer)
-            .filter(Answer.session_id == session_id)
-            .order_by(Answer.created_at.asc())
-            .all()
-        )
-        if not answers:
-            if session.status == "completed":
-                return _empty_session_results(session_id=session_id)
-            raise ValidationError("No answers found for this session.")
-
-        questions = (
-            db.query(Question)
-            .filter(Question.session_id == session_id)
-            .all()
-        )
-        questions_by_id = {question.id: question for question in questions}
-
-        if not questions_by_id:
-            raise ValidationError("No interview questions found for this session.")
-
-        for answer in answers:
-            if answer.question_id not in questions_by_id:
-                raise ValidationError("Question for one or more answers is missing in this session.")
-
-        answer_ids = {answer.id for answer in answers}
-
-        try:
-            existing_rows = (
-                db.query(Evaluation)
-                .filter(Evaluation.session_id == session_id)
-                .order_by(Evaluation.created_at.asc())
+    session_lock = await _get_session_evaluation_lock(session_id)
+    try:
+        async with session_lock:
+            answers = (
+                db.query(Answer)
+                .filter(Answer.session_id == session_id)
+                .order_by(Answer.created_at.asc())
                 .all()
             )
+            if not answers:
+                if session.status == "completed":
+                    return _empty_session_results(session_id=session_id)
+                raise ValidationError("No answers found for this session.")
 
-            existing_by_answer: dict[UUID, Evaluation] = {}
-            duplicate_rows: list[Evaluation] = []
-            for row in existing_rows:
-                previous = existing_by_answer.get(row.answer_id)
-                if previous is not None:
-                    duplicate_rows.append(previous)
-                existing_by_answer[row.answer_id] = row
+            questions = (
+                db.query(Question)
+                .filter(Question.session_id == session_id)
+                .all()
+            )
+            questions_by_id = {question.id: question for question in questions}
 
-            did_mutate = False
-
-            for row in duplicate_rows:
-                db.delete(row)
-                did_mutate = True
-
-            stale_answer_ids = [answer_id for answer_id in existing_by_answer if answer_id not in answer_ids]
-            for stale_answer_id in stale_answer_ids:
-                stale_row = existing_by_answer.pop(stale_answer_id, None)
-                if stale_row is not None:
-                    db.delete(stale_row)
-                    did_mutate = True
+            if not questions_by_id:
+                raise ValidationError("No interview questions found for this session.")
 
             for answer in answers:
-                if answer.id in existing_by_answer:
-                    continue
-
-                question = questions_by_id.get(answer.question_id)
-                if question is None:
+                if answer.question_id not in questions_by_id:
                     raise ValidationError("Question for one or more answers is missing in this session.")
 
-                evaluated = await evaluate_answer(
-                    answer=answer,
-                    question=question,
-                    session=session,
+            answer_ids = {answer.id for answer in answers}
+
+            try:
+                existing_rows = (
+                    db.query(Evaluation)
+                    .filter(Evaluation.session_id == session_id)
+                    .order_by(Evaluation.created_at.asc())
+                    .all()
                 )
-                db.add(
-                    Evaluation(
-                        answer_id=evaluated["answer_id"],
-                        session_id=session_id,
-                        relevance_score=evaluated["relevance_score"],
-                        clarity_score=evaluated["clarity_score"],
-                        depth_score=evaluated["depth_score"],
-                        structure_score=evaluated["structure_score"],
-                        overall_score=evaluated["overall_score"],
-                        feedback_text=evaluated["feedback_text"],
-                        strengths=evaluated["strengths"],
-                        improvements=evaluated["improvements"],
+
+                existing_by_answer: dict[UUID, Evaluation] = {}
+                duplicate_rows: list[Evaluation] = []
+                for row in existing_rows:
+                    previous = existing_by_answer.get(row.answer_id)
+                    if previous is not None:
+                        duplicate_rows.append(previous)
+                    existing_by_answer[row.answer_id] = row
+
+                did_mutate = False
+
+                for row in duplicate_rows:
+                    db.delete(row)
+                    did_mutate = True
+
+                stale_answer_ids = [answer_id for answer_id in existing_by_answer if answer_id not in answer_ids]
+                for stale_answer_id in stale_answer_ids:
+                    stale_row = existing_by_answer.pop(stale_answer_id, None)
+                    if stale_row is not None:
+                        db.delete(stale_row)
+                        did_mutate = True
+
+                for answer in answers:
+                    if answer.id in existing_by_answer:
+                        continue
+
+                    question = questions_by_id.get(answer.question_id)
+                    if question is None:
+                        raise ValidationError("Question for one or more answers is missing in this session.")
+
+                    evaluated = await evaluate_answer(
+                        answer=answer,
+                        question=question,
+                        session=session,
                     )
-                )
-                did_mutate = True
+                    db.add(
+                        Evaluation(
+                            answer_id=evaluated["answer_id"],
+                            session_id=session_id,
+                            relevance_score=evaluated["relevance_score"],
+                            clarity_score=evaluated["clarity_score"],
+                            depth_score=evaluated["depth_score"],
+                            structure_score=evaluated["structure_score"],
+                            overall_score=evaluated["overall_score"],
+                            feedback_text=evaluated["feedback_text"],
+                            strengths=evaluated["strengths"],
+                            improvements=evaluated["improvements"],
+                        )
+                    )
+                    did_mutate = True
 
-            if did_mutate:
-                db.commit()
-        except ValidationError:
-            db.rollback()
-            raise
-        except Exception as exc:
-            db.rollback()
-            logger.exception("Failed to evaluate session %s for user %s", session_id, user_id)
-            raise RuntimeError("Could not evaluate interview session.") from exc
+                if did_mutate:
+                    db.commit()
+            except ValidationError:
+                db.rollback()
+                raise
+            except Exception as exc:
+                db.rollback()
+                logger.exception("Failed to evaluate session %s for user %s", session_id, user_id)
+                raise RuntimeError("Could not evaluate interview session.") from exc
 
-        return _build_session_results(
-            db=db,
-            session=session,
+            return _build_session_results(
+                db=db,
+                session=session,
+                session_id=session_id,
+            )
+    finally:
+        await _cleanup_session_evaluation_lock(
             session_id=session_id,
+            lock=session_lock,
         )
 
 

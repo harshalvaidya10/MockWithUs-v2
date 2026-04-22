@@ -17,6 +17,7 @@ from app.models.job import JobDescription
 from app.models.question import Question
 from app.models.resume import Resume
 from app.schemas.interview import SessionCreate
+from app.services.answer_service import _schedule_background_evaluation
 from app.services.matcher import parse_embedding_vector, run_match
 from app.services.question_generator import generate_questions, validate_questions
 
@@ -108,11 +109,15 @@ def complete_interview_session_for_user(
     if session is None:
         raise NotFoundError("Interview session not found.")
 
+    did_mutate = False
     if session.status != "completed":
         session.status = "completed"
-        if session.completed_at is None:
-            session.completed_at = datetime.now(timezone.utc)
+        did_mutate = True
+    if session.completed_at is None:
+        session.completed_at = datetime.now(timezone.utc)
+        did_mutate = True
 
+    if did_mutate:
         try:
             db.commit()
             db.refresh(session)
@@ -124,6 +129,17 @@ def complete_interview_session_for_user(
                 user_id,
             )
             raise RuntimeError("Could not complete interview session.") from exc
+
+    try:
+        _schedule_background_evaluation(
+            user_id=session.user_id,
+            session_id=session.id,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to schedule background evaluation for completed session %s",
+            session.id,
+        )
 
     return session
 

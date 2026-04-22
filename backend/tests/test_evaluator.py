@@ -267,3 +267,34 @@ def test_typed_answer_uses_answer_text(monkeypatch: pytest.MonkeyPatch) -> None:
     assert captured["answer"] == "I optimized query plans and cut latency by 20%."
     assert captured["is_transcribed"] is False
     assert result["answer_text"] == "I optimized query plans and cut latency by 20%."
+
+
+def test_session_evaluation_lock_cleanup_removes_entry() -> None:
+    session_id = uuid4()
+    evaluator._SESSION_EVALUATION_LOCKS.clear()
+
+    async def scenario() -> None:
+        lock = await evaluator._get_session_evaluation_lock(session_id)
+        assert evaluator._SESSION_EVALUATION_LOCKS.get(session_id) is lock
+        await evaluator._cleanup_session_evaluation_lock(session_id=session_id, lock=lock)
+
+    asyncio.run(scenario())
+    assert session_id not in evaluator._SESSION_EVALUATION_LOCKS
+
+
+def test_session_evaluation_lock_cleanup_only_removes_matching_lock() -> None:
+    session_id = uuid4()
+    evaluator._SESSION_EVALUATION_LOCKS.clear()
+
+    async def scenario() -> None:
+        first_lock = await evaluator._get_session_evaluation_lock(session_id)
+        replacement_lock = asyncio.Lock()
+        evaluator._SESSION_EVALUATION_LOCKS[session_id] = replacement_lock
+
+        await evaluator._cleanup_session_evaluation_lock(session_id=session_id, lock=first_lock)
+        assert evaluator._SESSION_EVALUATION_LOCKS.get(session_id) is replacement_lock
+
+        await evaluator._cleanup_session_evaluation_lock(session_id=session_id, lock=replacement_lock)
+
+    asyncio.run(scenario())
+    assert session_id not in evaluator._SESSION_EVALUATION_LOCKS

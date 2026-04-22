@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import uuid
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TypedDict
@@ -23,6 +25,24 @@ from app.services.transcription_service import TranscriptionError, Transcription
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+_DEFAULT_BG_EVAL_CONCURRENCY = 2
+
+
+def _configured_bg_eval_concurrency() -> int:
+    configured = getattr(settings, "llm_eval_max_concurrency", _DEFAULT_BG_EVAL_CONCURRENCY)
+    try:
+        return max(1, int(configured))
+    except (TypeError, ValueError):
+        return _DEFAULT_BG_EVAL_CONCURRENCY
+
+
+_BG_EVAL_CONCURRENCY = _configured_bg_eval_concurrency()
+_BG_EVAL_EXECUTOR = ThreadPoolExecutor(
+    max_workers=_BG_EVAL_CONCURRENCY,
+    thread_name_prefix="bg-eval",
+)
+_BG_EVAL_FUTURES: set[Future[None]] = set()
+_BG_EVAL_FUTURES_LOCK = threading.Lock()
 
 ALLOWED_AUDIO_EXTENSIONS = {".wav", ".mp3", ".m4a", ".ogg", ".webm"}
 ALLOWED_AUDIO_CONTENT_TYPES = {
@@ -114,9 +134,33 @@ async def _run_background_evaluation(*, user_id: UUID, session_id: UUID) -> None
         db.close()
 
 
+def _run_background_evaluation_job(*, user_id: UUID, session_id: UUID) -> None:
+    asyncio.run(_run_background_evaluation(user_id=user_id, session_id=session_id))
+
+
+def _track_background_future(future: Future[None], *, session_id: UUID) -> None:
+    with _BG_EVAL_FUTURES_LOCK:
+        _BG_EVAL_FUTURES.add(future)
+
+    def _cleanup(done_future: Future[None]) -> None:
+        with _BG_EVAL_FUTURES_LOCK:
+            _BG_EVAL_FUTURES.discard(done_future)
+        try:
+            done_future.result()
+        except Exception:
+            logger.exception("Background evaluation job crashed for session %s", session_id)
+
+    future.add_done_callback(_cleanup)
+
+
 def _schedule_background_evaluation(*, user_id: UUID, session_id: UUID) -> None:
     logger.info("Background evaluation started for session %s", session_id)
-    asyncio.create_task(_run_background_evaluation(user_id=user_id, session_id=session_id))
+    future = _BG_EVAL_EXECUTOR.submit(
+        _run_background_evaluation_job,
+        user_id=user_id,
+        session_id=session_id,
+    )
+    _track_background_future(future, session_id=session_id)
 
 
 def list_answers_for_session(
