@@ -318,6 +318,12 @@ def test_submit_audio_answer_marks_session_completed_on_final_question(
     question = _seed_question(fake_db, session_id=session.id, order_index=1)
 
     monkeypatch.setattr(answer_service_module, "transcribe_audio_file", lambda _path: "final answer")
+    scheduled_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        answer_service_module,
+        "_schedule_background_evaluation",
+        lambda **kwargs: scheduled_calls.append(kwargs),
+    )
 
     response = client.post(
         "/answers/audio",
@@ -328,6 +334,37 @@ def test_submit_audio_answer_marks_session_completed_on_final_question(
     assert response.status_code == 201
     assert session.status == "completed"
     assert session.completed_at is not None
+    assert scheduled_calls == [{"user_id": user.id, "session_id": session.id}]
+
+
+def test_submit_audio_answer_does_not_reschedule_when_already_completed(
+    auth_context: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_db = auth_context["db"]
+    user = auth_context["user"]
+    assert isinstance(fake_db, FakeSession)
+    assert isinstance(user, User)
+
+    session = _seed_session(fake_db, user_id=user.id, status="completed")
+    session.completed_at = datetime.now(timezone.utc)
+    question = _seed_question(fake_db, session_id=session.id, order_index=1)
+
+    monkeypatch.setattr(answer_service_module, "transcribe_audio_file", lambda _path: "final answer")
+    scheduled_calls: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        answer_service_module,
+        "_schedule_background_evaluation",
+        lambda **kwargs: scheduled_calls.append(kwargs),
+    )
+
+    response = client.post(
+        "/answers/audio",
+        data={"session_id": str(session.id), "question_id": str(question.id)},
+        files={"audio": ("answer.webm", b"FAKEAUDIOBYTES", "audio/webm")},
+    )
+
+    assert response.status_code == 201
+    assert scheduled_calls == []
 
 
 def test_submit_audio_answer_scheduler_failure_does_not_fail_response(

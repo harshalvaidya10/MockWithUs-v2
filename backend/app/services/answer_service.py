@@ -111,6 +111,39 @@ def _get_question(db: Session, question_id: UUID) -> Question | None:
     return db.query(Question).filter(Question.id == question_id).first()
 
 
+def _claim_session_completion_transition(*, db: Session, session_id: UUID) -> bool:
+    """Atomically mark a session completed and return True only for first transition."""
+    completed_at = datetime.now(timezone.utc)
+    try:
+        rows_updated = (
+            db.query(InterviewSession)
+            .filter(
+                InterviewSession.id == session_id,
+                InterviewSession.status != "completed",
+            )
+            .update(
+                {
+                    InterviewSession.status: "completed",
+                    InterviewSession.completed_at: completed_at,
+                },
+                synchronize_session=False,
+            )
+        )
+        return bool(rows_updated)
+    except (AttributeError, TypeError):
+        # Fallback for lightweight test doubles without Query.update support.
+        session = _get_session(db, session_id)
+        if session is None:
+            return False
+        if session.status == "completed":
+            if session.completed_at is None:
+                session.completed_at = completed_at
+            return False
+        session.status = "completed"
+        session.completed_at = completed_at
+        return True
+
+
 def configure_background_evaluation_loop(loop: asyncio.AbstractEventLoop) -> None:
     """Store the application's primary event loop for cross-thread scheduling."""
     global _BG_EVAL_LOOP
@@ -366,11 +399,10 @@ async def submit_audio_answer(
     should_start_background_evaluation = False
     is_now_complete = bool(session_questions) and len(answered_question_ids) >= len(session_questions)
     if is_now_complete:
-        should_start_background_evaluation = session.status != "completed"
-        session.status = "completed"
-        if session.completed_at is None:
-            should_start_background_evaluation = True
-            session.completed_at = datetime.now(timezone.utc)
+        should_start_background_evaluation = _claim_session_completion_transition(
+            db=db,
+            session_id=session_id,
+        )
 
     committed = False
     try:

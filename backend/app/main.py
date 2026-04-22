@@ -29,9 +29,11 @@ async def lifespan(_: FastAPI):
 
     logger.info("Starting MockWithUs API in %s mode.", settings.environment)
     configure_background_evaluation_loop(asyncio.get_running_loop())
-    yield
-    await shutdown_background_evaluation_scheduler()
-    logger.info("Shutting down MockWithUs API.")
+    try:
+        yield
+    finally:
+        await shutdown_background_evaluation_scheduler()
+        logger.info("Shutting down MockWithUs API.")
 
 
 app = FastAPI(title=settings.app_name, debug=settings.debug, lifespan=lifespan)
