@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -8,6 +9,10 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.routers import answers, audio, auth, evaluations, interviews, jobs, resumes
+from app.services.answer_service import (
+    configure_background_evaluation_loop,
+    shutdown_background_evaluation_scheduler,
+)
 
 
 logging.basicConfig(
@@ -23,7 +28,9 @@ async def lifespan(_: FastAPI):
     """Application lifespan hooks for startup and shutdown logging."""
 
     logger.info("Starting MockWithUs API in %s mode.", settings.environment)
+    configure_background_evaluation_loop(asyncio.get_running_loop())
     yield
+    await shutdown_background_evaluation_scheduler()
     logger.info("Shutting down MockWithUs API.")
 
 

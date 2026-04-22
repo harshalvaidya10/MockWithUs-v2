@@ -328,3 +328,35 @@ def test_submit_audio_answer_marks_session_completed_on_final_question(
     assert response.status_code == 201
     assert session.status == "completed"
     assert session.completed_at is not None
+
+
+def test_submit_audio_answer_scheduler_failure_does_not_fail_response(
+    auth_context: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_db = auth_context["db"]
+    user = auth_context["user"]
+    assert isinstance(fake_db, FakeSession)
+    assert isinstance(user, User)
+
+    session = _seed_session(fake_db, user_id=user.id, status="ready")
+    question = _seed_question(fake_db, session_id=session.id, order_index=1)
+
+    monkeypatch.setattr(answer_service_module, "transcribe_audio_file", lambda _path: "final answer")
+
+    def _raise_scheduler_error(**_: object) -> None:
+        raise RuntimeError("scheduler failed")
+
+    monkeypatch.setattr(answer_service_module, "_schedule_background_evaluation", _raise_scheduler_error)
+
+    response = client.post(
+        "/answers/audio",
+        data={"session_id": str(session.id), "question_id": str(question.id)},
+        files={"audio": ("answer.webm", b"FAKEAUDIOBYTES", "audio/webm")},
+    )
+
+    assert response.status_code == 201
+    assert session.status == "completed"
+    assert session.completed_at is not None
+
+    saved_answers = fake_db.query(Answer).filter(Answer.session_id == session.id).all()
+    assert len(saved_answers) == 1
