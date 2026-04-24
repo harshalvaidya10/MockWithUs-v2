@@ -1,5 +1,13 @@
 import { getAccessToken, clearAccessToken } from "@/lib/auth";
-import type { InterviewHistoryResponse } from "@/types";
+import type {
+  CodeRunResponse,
+  CodeSubmitResponse,
+  CodingDifficulty,
+  CodingLanguage,
+  CodingProblemResponse,
+  CodingSessionResponse,
+  InterviewHistoryResponse,
+} from "@/types";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -13,9 +21,8 @@ export class ApiError extends Error {
   }
 }
 
-export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+function buildRequestHeaders(init?: RequestInit): Headers {
   const token = getAccessToken();
-
   const headers = new Headers(init?.headers);
 
   if (!(init?.body instanceof FormData)) {
@@ -25,6 +32,12 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
   if (token) {
     headers.set("Authorization", `Bearer ${token}`);
   }
+
+  return headers;
+}
+
+export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = buildRequestHeaders(init);
 
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
@@ -81,6 +94,112 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
   }
 }
 
+export interface ApiBlobResponse {
+  blob: Blob;
+  contentType: string;
+  contentDisposition: string;
+}
+
+export async function apiRequestBlob(path: string, init?: RequestInit): Promise<ApiBlobResponse> {
+  const headers = buildRequestHeaders(init);
+
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...init,
+    headers,
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    let message = `API request failed with status ${response.status}`;
+
+    try {
+      const errorData = (await response.json()) as { detail?: string };
+      if (errorData?.detail) {
+        message = errorData.detail;
+      }
+    } catch {
+      // Ignore JSON parse errors and keep fallback message.
+    }
+
+    if (response.status === 401) {
+      clearAccessToken();
+    }
+
+    throw new ApiError(message, response.status);
+  }
+
+  return {
+    blob: await response.blob(),
+    contentType: response.headers.get("content-type") ?? "",
+    contentDisposition: response.headers.get("content-disposition") ?? "",
+  };
+}
+
 export async function getInterviewHistory(): Promise<InterviewHistoryResponse> {
   return apiRequest<InterviewHistoryResponse>("/interviews");
+}
+
+export async function deleteInterviewSession(sessionId: string): Promise<void> {
+  return apiRequest<void>(`/interviews/${sessionId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function startCodingSession(
+  resumeId: string,
+  jobId: string,
+  difficulty: CodingDifficulty,
+  signal?: AbortSignal,
+): Promise<CodingSessionResponse> {
+  return apiRequest<CodingSessionResponse>("/coding/start", {
+    method: "POST",
+    signal,
+    body: JSON.stringify({
+      resume_id: resumeId,
+      job_id: jobId,
+      difficulty,
+    }),
+  });
+}
+
+export async function getCodingProblem(sessionId: string): Promise<CodingProblemResponse> {
+  return apiRequest<CodingProblemResponse>(`/coding/${sessionId}/problem`);
+}
+
+export async function runCode(
+  sessionId: string,
+  problemId: string,
+  language: CodingLanguage,
+  sourceCode: string,
+): Promise<CodeRunResponse> {
+  return apiRequest<CodeRunResponse>("/coding/run", {
+    method: "POST",
+    body: JSON.stringify({
+      session_id: sessionId,
+      problem_id: problemId,
+      language,
+      source_code: sourceCode,
+    }),
+  });
+}
+
+export async function submitCode(
+  sessionId: string,
+  problemId: string,
+  language: CodingLanguage,
+  sourceCode: string,
+): Promise<CodeSubmitResponse> {
+  return apiRequest<CodeSubmitResponse>("/coding/submit", {
+    method: "POST",
+    body: JSON.stringify({
+      session_id: sessionId,
+      problem_id: problemId,
+      language,
+      source_code: sourceCode,
+    }),
+  });
+}
+
+export async function getCodingResults(sessionId: string): Promise<CodeSubmitResponse> {
+  return apiRequest<CodeSubmitResponse>(`/coding/${sessionId}/results`);
 }

@@ -8,6 +8,7 @@ export interface User {
 export interface Session {
   id: string;
   status: string;
+  session_type: "interview" | "coding";
   match_score: number | null;
   match_summary: string | null;
   created_at: string;
@@ -125,6 +126,7 @@ export interface InterviewHistoryItem {
   resume_id: string | null;
   job_id: string | null;
   status: string;
+  session_type: "interview" | "coding";
   match_score: number | null;
   match_summary: string | null;
   question_count: number;
@@ -132,8 +134,88 @@ export interface InterviewHistoryItem {
   is_complete: boolean;
   created_at: string;
   completed_at: string | null;
+  problem_title?: string | null;
+  difficulty?: "medium" | "hard" | null;
+  tests_passed?: number | null;
+  tests_total?: number | null;
+  overall_score?: number | null;
 }
 
 export interface InterviewHistoryResponse {
   sessions: InterviewHistoryItem[];
+}
+
+export type CodingLanguage = "python" | "javascript" | "java" | "cpp";
+export type CodingDifficulty = "medium" | "hard";
+
+export interface CodingFunctionSignatureEntry {
+  name: string;
+  params: string;
+  return_type: string;
+}
+
+export interface CodingProblem {
+  id: string;
+  title: string;
+  description: string;
+  difficulty: string;
+  category: string | null;
+  function_signature: Record<string, CodingFunctionSignatureEntry>;
+  starter_code: Record<string, string>;
+  constraints: string | null;
+}
+
+export interface TestCase {
+  id: string;
+  input_data: string;
+  expected_output: string;
+  order_index: number | null;
+}
+
+export interface TestResult {
+  test_case_id: string;
+  passed: boolean;
+  actual_output: string | null;
+  expected_output: string | null;
+  runtime_ms: number | null;
+  error_output: string | null;
+  status: string;
+}
+
+export interface CodeEvaluation {
+  tests_passed: number;
+  tests_total: number;
+  pass_rate: number;
+  correctness_score: number;
+  efficiency_score: number;
+  code_quality_score: number;
+  problem_solving_score: number;
+  overall_score: number;
+  feedback_text: string;
+  strengths: string[];
+  improvements: string[];
+  expected_solution: string;
+  complexity_analysis: string;
+}
+
+export interface CodingSessionResponse {
+  session_id: string;
+  problem: CodingProblem;
+  sample_test_cases: TestCase[];
+}
+
+export interface CodingProblemResponse {
+  problem: CodingProblem;
+  sample_test_cases: TestCase[];
+}
+
+export interface CodeRunResponse {
+  submission_id: string;
+  results: TestResult[];
+}
+
+export interface CodeSubmitResponse {
+  submission_id: string;
+  results: TestResult[];
+  evaluation: CodeEvaluation;
 }

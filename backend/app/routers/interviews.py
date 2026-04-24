@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import NotFoundError
@@ -18,6 +18,7 @@ from app.schemas.interview import (
 )
 from app.services.interview_service import (
     complete_interview_session_for_user,
+    delete_interview_session_for_user,
     get_interview_session_for_user,
     list_interview_sessions_for_user,
     start_interview_session,
@@ -87,6 +88,7 @@ def list_interview_sessions(
                 resume_id=item["session"].resume_id,
                 job_id=item["session"].job_id,
                 status=item["session"].status,
+                session_type=item["session"].session_type,
                 match_score=item["session"].match_score,
                 match_summary=item["session"].match_summary,
                 question_count=item["question_count"],
@@ -169,3 +171,37 @@ def get_interview_session(
         match_summary=result["session"].match_summary or "",
         questions=[SessionStartQuestionOut.model_validate(question) for question in result["questions"]],
     )
+
+
+@router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_interview_session(
+    session_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> Response:
+    """Delete a saved interview/coding session and its dependent data."""
+    try:
+        delete_interview_session_for_user(
+            db=db,
+            user_id=current_user.id,
+            session_id=session_id,
+        )
+    except NotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:
+        logger.exception(
+            "Unexpected error while deleting interview session %s for user %s",
+            session_id,
+            current_user.id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not delete interview session.",
+        ) from exc
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

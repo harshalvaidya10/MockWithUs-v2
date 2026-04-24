@@ -386,3 +386,32 @@ def test_call_llm_uses_fallback_provider_after_primary_429_exhaustion(
     fallback_call_model = factory.instances[0].calls[-1]["json"]["model"]
     assert primary_call_model == "qwen/qwen3-32b"
     assert fallback_call_model == "anthropic/claude-3.5-sonnet"
+
+
+def test_call_llm_sets_hidden_reasoning_for_groq_qwen3(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(llm_client, "settings", _make_settings(provider="groq", model="qwen/qwen3-32b"))
+
+    factory = _AsyncClientFactory(
+        [
+            _FakeResponse(
+                200,
+                payload={"choices": [{"message": {"content": '{"ok": true}'}}]},
+            ),
+        ]
+    )
+    monkeypatch.setattr(llm_client.httpx, "AsyncClient", factory)
+
+    response_text = asyncio.run(
+        llm_client.call_llm(
+            messages=[{"role": "user", "content": "test"}],
+            temperature=0.2,
+        )
+    )
+
+    assert response_text == '{"ok": true}'
+    assert len(factory.instances) == 1
+    payload = factory.instances[0].calls[0]["json"]
+    assert payload["reasoning_format"] == "hidden"
+    assert payload["reasoning_effort"] == "none"

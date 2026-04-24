@@ -17,6 +17,11 @@ from app.models.question import Question
 from app.models.resume import Resume
 from app.models.user import User
 from app.models.answer import Answer
+from app.models.coding_problem import CodingProblem
+from app.models.code_submission import CodeSubmission
+from app.models.code_evaluation import CodeEvaluation
+from app.models.test_case import TestCase as CodingTestCase
+from app.models.test_result import TestResult as CodingTestResult
 
 
 client = TestClient(app)
@@ -53,6 +58,9 @@ class FakeSession:
     def rollback(self) -> None:
         return
 
+    def delete(self, obj: object) -> None:
+        self._store = [item for item in self._store if item is not obj]
+
     def query(self, model: type) -> _FakeQuery:
         return _FakeQuery(self._store, model)
 
@@ -61,6 +69,7 @@ class _FakeQuery:
     """Minimal SQLAlchemy-like query chain backed by an in-memory list."""
 
     def __init__(self, store: list[object], model: type) -> None:
+        self._store = store
         self._results: list[object] = [obj for obj in store if isinstance(obj, model)]
 
     @staticmethod
@@ -103,6 +112,14 @@ class _FakeQuery:
 
     def all(self) -> list[object]:
         return list(self._results)
+
+    def delete(self, synchronize_session: bool | str | None = None) -> int:
+        _ = synchronize_session
+        ids_to_delete = {id(obj) for obj in self._results}
+        original_count = len(self._store)
+        self._store[:] = [obj for obj in self._store if id(obj) not in ids_to_delete]
+        self._results = []
+        return original_count - len(self._store)
 
 
 def _make_user() -> User:
@@ -162,6 +179,7 @@ def _seed_session_with_questions(
         match_score=0.75,
         match_summary="Strong FastAPI alignment with minor system-design gap.",
         status="ready",
+        session_type="interview",
     )
     session.id = uuid4()
     session.created_at = datetime.now(timezone.utc)
@@ -214,6 +232,92 @@ def _seed_answers(
         db.add(answer)
         answers.append(answer)
     return answers
+
+
+def _seed_coding_artifacts(
+    db: FakeSession,
+    *,
+    session_id: UUID,
+) -> tuple[CodingProblem, CodeSubmission, CodeEvaluation, CodingTestCase, CodingTestResult]:
+    coding_problem = CodingProblem(
+        session_id=session_id,
+        title="Two Sum",
+        description="Find indices of two numbers that sum to target.",
+        difficulty="medium",
+        category="arrays",
+        function_signature={
+            "python": {"name": "solve", "params": "nums: list[int], target: int", "return_type": "list[int]"},
+            "javascript": {"name": "solve", "params": "nums, target", "return_type": "number[]"},
+            "java": {"name": "solve", "params": "int[] nums, int target", "return_type": "int[]"},
+            "cpp": {"name": "solve", "params": "vector<int>& nums, int target", "return_type": "vector<int>"},
+        },
+        starter_code={"python": "def solve(nums, target):\n    return []\n"},
+        reference_solution="def solve(nums, target):\n    return [0, 1]\n",
+        constraints="2 <= n <= 10^5",
+    )
+    coding_problem.id = uuid4()
+    coding_problem.created_at = datetime.now(timezone.utc)
+    db.add(coding_problem)
+
+    test_case = CodingTestCase(
+        problem_id=coding_problem.id,
+        input_data="[[2,7,11,15],9]",
+        expected_output="[0,1]",
+        is_sample=True,
+        is_edge_case=False,
+        order_index=1,
+    )
+    test_case.id = uuid4()
+    test_case.created_at = datetime.now(timezone.utc)
+    db.add(test_case)
+
+    submission = CodeSubmission(
+        session_id=session_id,
+        problem_id=coding_problem.id,
+        language="python",
+        source_code="def solve(nums, target):\n    return [0, 1]\n",
+        submission_type="submit",
+    )
+    submission.id = uuid4()
+    submission.created_at = datetime.now(timezone.utc)
+    db.add(submission)
+
+    test_result = CodingTestResult(
+        submission_id=submission.id,
+        test_case_id=test_case.id,
+        passed=True,
+        actual_output="[0,1]",
+        expected_output="[0,1]",
+        runtime_ms=5,
+        error_output=None,
+        status="accepted",
+    )
+    test_result.id = uuid4()
+    test_result.created_at = datetime.now(timezone.utc)
+    db.add(test_result)
+
+    code_evaluation = CodeEvaluation(
+        submission_id=submission.id,
+        session_id=session_id,
+        tests_passed=1,
+        tests_total=1,
+        pass_rate=1.0,
+        correctness_score=9.0,
+        efficiency_score=8.5,
+        code_quality_score=8.0,
+        problem_solving_score=8.5,
+        overall_score=8.6,
+        feedback_text="Great work.",
+        strengths=["Correct logic"],
+        improvements=["Add comments"],
+        expected_solution="Use hashmap.",
+        complexity_analysis="O(n) time",
+    )
+    code_evaluation.id = uuid4()
+    code_evaluation.created_at = datetime.now(timezone.utc)
+    db.add(code_evaluation)
+
+    return coding_problem, submission, code_evaluation, test_case, test_result
 
 
 @pytest.fixture()
@@ -503,3 +607,52 @@ def test_complete_interview_session_schedules_evaluation_even_if_already_complet
     assert response.status_code == 200
     assert response.json()["status"] == "completed"
     assert scheduled_calls == [{"user_id": user.id, "session_id": session.id}]
+
+
+def test_delete_interview_session_removes_interview_and_coding_artifacts(auth_context: dict) -> None:
+    """DELETE /interviews/{session_id} should remove the session and all dependent records."""
+    fake_db = auth_context["db"]
+    user = auth_context["user"]
+
+    assert isinstance(fake_db, FakeSession)
+    assert isinstance(user, User)
+
+    resume = _seed_resume(fake_db, user_id=user.id)
+    job = _seed_job(fake_db, user_id=user.id)
+    session, questions = _seed_session_with_questions(
+        fake_db,
+        user_id=user.id,
+        resume_id=resume.id,
+        job_id=job.id,
+    )
+    _seed_answers(
+        fake_db,
+        session_id=session.id,
+        question_ids=[question.id for question in questions[:2]],
+    )
+    coding_problem, submission, code_evaluation, test_case, test_result = _seed_coding_artifacts(
+        fake_db,
+        session_id=session.id,
+    )
+
+    response = client.delete(f"/interviews/{session.id}")
+    assert response.status_code == 204
+
+    assert fake_db.query(InterviewSession).filter(InterviewSession.id == session.id).first() is None
+    assert fake_db.query(Question).filter(Question.session_id == session.id).all() == []
+    assert fake_db.query(Answer).filter(Answer.session_id == session.id).all() == []
+    assert fake_db.query(CodingProblem).filter(CodingProblem.id == coding_problem.id).first() is None
+    assert fake_db.query(CodeSubmission).filter(CodeSubmission.id == submission.id).first() is None
+    assert fake_db.query(CodeEvaluation).filter(CodeEvaluation.id == code_evaluation.id).first() is None
+    assert fake_db.query(CodingTestCase).filter(CodingTestCase.id == test_case.id).first() is None
+    assert fake_db.query(CodingTestResult).filter(CodingTestResult.id == test_result.id).first() is None
+
+
+def test_delete_interview_session_returns_404_for_missing_session(auth_context: dict) -> None:
+    """DELETE /interviews/{session_id} should return 404 when session does not exist."""
+    _ = auth_context
+    missing_session_id = uuid4()
+
+    response = client.delete(f"/interviews/{missing_session_id}")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Interview session not found."

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">MockWithUs Icon</title>
+  <desc id="desc">Rounded purple square with stylized white M and dot.</desc>
+  <rect width="512" height="512" rx="136" fill="#5E5CE6" />
+  <path
+    d="M128 350 L194 170 L256 300 L318 170 L384 350"
+    fill="none"
+    stroke="#FFFFFF"
+    stroke-width="34"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <circle cx="256" cy="384" r="20" fill="#FFFFFF" />
+</svg>

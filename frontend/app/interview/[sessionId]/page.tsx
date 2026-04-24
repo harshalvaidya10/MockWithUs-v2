@@ -4,6 +4,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 
+import { QuestionPlayer } from "@/components/interview/QuestionPlayer";
+import { ConfirmDialog } from "@/components/ui/ConfirmDialog";
+import { LongRunningLoader } from "@/components/ui/LongRunningLoader";
 import { ApiError, apiRequest } from "@/lib/api";
 import { useInterview } from "@/hooks/useInterview";
 import type {
@@ -21,7 +24,7 @@ const RECORDING_MIME_CANDIDATES = [
 ];
 
 function formatCategory(category: string): string {
-  return category.replace("_", " ");
+  return category.replaceAll("_", " ");
 }
 
 function getApiErrorMessage(error: unknown, fallback: string): string {
@@ -49,14 +52,6 @@ function extensionForMimeType(mimeType: string): string {
   return ".webm";
 }
 
-function formatDuration(seconds: number): string {
-  const mins = Math.floor(seconds / 60)
-    .toString()
-    .padStart(2, "0");
-  const secs = (seconds % 60).toString().padStart(2, "0");
-  return `${mins}:${secs}`;
-}
-
 export default function InterviewSessionPage(): JSX.Element {
   const router = useRouter();
   const routeParams = useParams<{ sessionId?: string | string[] }>();
@@ -80,6 +75,8 @@ export default function InterviewSessionPage(): JSX.Element {
 
   const [isUploading, setIsUploading] = useState(false);
   const [isQuitting, setIsQuitting] = useState(false);
+  const [showQuitConfirm, setShowQuitConfirm] = useState(false);
+  const [isFinishingFlow, setIsFinishingFlow] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [lastTranscript, setLastTranscript] = useState<string | null>(null);
 
@@ -365,8 +362,11 @@ export default function InterviewSessionPage(): JSX.Element {
 
       const nextIndex = orderedQuestions.findIndex((question) => !updatedAnswered.has(question.id));
       if (nextIndex === -1) {
+        setIsFinishingFlow(true);
         setCurrentIndex(orderedQuestions.length);
-        router.push(`/interview/results/${sessionId}`);
+        window.setTimeout(() => {
+          router.push(`/interview/${sessionId}/results`);
+        }, 250);
         return;
       }
       setCurrentIndex(nextIndex);
@@ -379,13 +379,6 @@ export default function InterviewSessionPage(): JSX.Element {
 
   async function handleQuitInterview(): Promise<void> {
     if (!sessionId || isQuitting || isUploading) return;
-
-    const hasUnsavedRecording = isRecording || Boolean(recordedBlob);
-    const confirmationMessage = hasUnsavedRecording
-      ? "End interview now and evaluate only submitted answers? Unsaved recording for this question will be discarded."
-      : "End interview now and evaluate only submitted answers?";
-    const confirmed = typeof window !== "undefined" ? window.confirm(confirmationMessage) : true;
-    if (!confirmed) return;
 
     setIsQuitting(true);
     setSubmitError(null);
@@ -406,7 +399,7 @@ export default function InterviewSessionPage(): JSX.Element {
     } catch (error) {
       setSubmitError(getApiErrorMessage(error, "Could not mark interview as completed. Showing results anyway."));
     } finally {
-      router.push(`/interview/results/${sessionId}`);
+      router.push(`/interview/${sessionId}/results`);
     }
   }
 
@@ -415,10 +408,10 @@ export default function InterviewSessionPage(): JSX.Element {
 
   if (isLoading) {
     return (
-      <main className="min-h-screen px-6 py-12">
-        <div className="mx-auto max-w-5xl rounded-2xl border border-slate-800 bg-slate-900/70 p-8">
-          <h1 className="text-3xl font-semibold text-white">Interview session</h1>
-          <p className="mt-2 text-sm text-slate-300">Loading interview session...</p>
+      <main className="min-h-screen bg-background px-6 py-12">
+        <div className="mx-auto max-w-5xl rounded-2xl border border-border bg-surface p-8">
+          <h1 className="text-3xl font-semibold tracking-tight text-foreground">Interview session</h1>
+          <p className="mt-2 text-sm text-foreground-muted">Loading interview session...</p>
         </div>
       </main>
     );
@@ -426,23 +419,23 @@ export default function InterviewSessionPage(): JSX.Element {
 
   if (errorMessage || !sessionData) {
     return (
-      <main className="min-h-screen px-6 py-12">
-        <div className="mx-auto max-w-5xl rounded-2xl border border-slate-800 bg-slate-900/70 p-8">
-          <h1 className="text-3xl font-semibold text-white">Interview session</h1>
-          <p className="mt-4 text-sm text-red-300">{errorMessage ?? "Interview session data is unavailable."}</p>
+      <main className="min-h-screen bg-background px-6 py-12">
+        <div className="mx-auto max-w-5xl rounded-2xl border border-border bg-surface p-8">
+          <h1 className="text-3xl font-semibold tracking-tight text-foreground">Interview session</h1>
+          <p className="mt-4 text-sm text-danger">{errorMessage ?? "Interview session data is unavailable."}</p>
           <div className="mt-5 flex gap-3">
             <Link
-              href="/dashboard/matching"
-              className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800"
+              href="/practice"
+              className="app-btn-secondary"
             >
-              Back to Matching
+              Back to Practice
             </Link>
             <button
               type="button"
               onClick={() => {
                 void loadSessionData();
               }}
-              className="rounded-xl bg-white px-4 py-2 text-sm font-medium text-slate-950 transition hover:bg-slate-200"
+              className="app-btn-primary"
             >
               Retry
             </button>
@@ -454,16 +447,16 @@ export default function InterviewSessionPage(): JSX.Element {
 
   if (interviewState.isComplete || !currentQuestion) {
     return (
-      <main className="min-h-screen px-6 py-12">
-        <div className="mx-auto max-w-5xl rounded-2xl border border-emerald-800 bg-emerald-950/20 p-8">
-          <h1 className="text-3xl font-semibold text-white">Interview complete</h1>
-          <p className="mt-3 text-sm text-emerald-100">
+      <main className="min-h-screen bg-background px-6 py-12">
+        <div className="mx-auto max-w-5xl rounded-2xl border border-success bg-success-subtle p-8">
+          <h1 className="text-3xl font-semibold tracking-tight text-foreground">Interview complete</h1>
+          <p className="mt-3 text-sm text-success">
             You have submitted spoken answers for all {totalQuestions} questions.
           </p>
           <div className="mt-5">
             <Link
-              href={`/interview/results/${sessionId}`}
-              className="rounded-xl bg-white px-5 py-2.5 text-sm font-medium text-slate-950 transition hover:bg-slate-200"
+              href={`/interview/${sessionId}/results`}
+              className="app-btn-primary"
             >
               Continue to Results
             </Link>
@@ -474,153 +467,111 @@ export default function InterviewSessionPage(): JSX.Element {
   }
 
   return (
-    <main className="min-h-screen px-6 py-12">
+    <main className="min-h-screen bg-background px-6 py-12">
       <div className="mx-auto max-w-5xl space-y-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <Link href="/dashboard/matching" className="text-xs text-slate-400 transition hover:text-slate-200">
-              ← Back to Matching
-            </Link>
-            <h1 className="mt-1 text-3xl font-semibold text-white">Audio Interview Session</h1>
-            <p className="mt-2 text-sm text-slate-300">
-              Session ID: <span className="font-mono">{sessionId}</span>
-            </p>
-          </div>
-          <div className="text-right">
-            <p className="text-sm text-slate-300">
-              Question {interviewState.currentIndex + 1} of {totalQuestions}
-            </p>
-            <p className="text-xs text-slate-400">{answeredCount} answered</p>
+        <header className="rounded-xl border border-border bg-surface p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-sm font-medium text-foreground">
+                Question {interviewState.currentIndex + 1} of {totalQuestions}
+              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <span className="rounded-full border border-primary bg-primary-subtle px-2 py-0.5 text-xs font-medium text-primary">
+                  {formatCategory(currentQuestion.category)}
+                </span>
+                <span className="text-xs text-foreground-muted">{answeredCount} answered</span>
+              </div>
+            </div>
             <button
               type="button"
               onClick={() => {
-                void handleQuitInterview();
+                setShowQuitConfirm(true);
               }}
               disabled={isUploading || isQuitting}
-              className="mt-2 rounded-lg border border-red-800 px-3 py-1.5 text-xs font-medium text-red-200 transition hover:bg-red-950/40 disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex h-8 items-center justify-center rounded-lg border border-danger px-3 text-xs font-medium text-danger transition-colors duration-150 hover:bg-danger-subtle disabled:cursor-not-allowed disabled:opacity-60"
             >
-              {isQuitting ? "Ending interview..." : "Quit Interview"}
+              {isQuitting ? "Ending..." : "Exit"}
             </button>
           </div>
-        </div>
+
+          <div className="mt-4 h-2 overflow-hidden rounded-full bg-surface-hover">
+            <div
+              className="h-full bg-primary"
+              style={{
+                width: `${Math.max(
+                  4,
+                  Math.min(100, ((Math.min(interviewState.currentIndex + 1, totalQuestions)) / Math.max(1, totalQuestions)) * 100),
+                )}%`,
+              }}
+            />
+          </div>
+          <p className="mt-2 text-xs text-foreground-muted">
+            {Math.round((answeredCount / Math.max(1, totalQuestions)) * 100)}% answered
+          </p>
+        </header>
 
         {progressWarning ? (
-          <div className="rounded-xl border border-amber-900 bg-amber-950/40 px-4 py-3 text-sm text-amber-200">
+          <div className="rounded-xl border border-warning bg-warning-subtle px-4 py-3 text-sm text-warning">
             {progressWarning}
           </div>
         ) : null}
 
-        <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-6 shadow-xl">
-          <p className="text-xs uppercase tracking-wide text-slate-400">
-            {formatCategory(currentQuestion.category)}
-          </p>
-          <p className="mt-2 text-xl font-medium text-white">{currentQuestion.question_text}</p>
-          <p className="mt-3 text-sm text-slate-400">{currentQuestion.rationale}</p>
-
-          <div className="mt-5 flex flex-wrap gap-3">
-            <button
-              type="button"
-              onClick={() => {
-                if (isSpeaking) {
-                  stopSpeaking();
-                } else {
-                  void handlePlayQuestion();
-                }
-              }}
-              disabled={isQuitting}
-              className="rounded-xl border border-slate-700 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800"
-            >
-              {isSpeaking ? "Stop Question Audio" : "Play Question Audio"}
-            </button>
-          </div>
-          {speechError ? (
-            <div className="mt-3 rounded-xl border border-amber-900 bg-amber-950/40 px-4 py-3 text-sm text-amber-200">
-              {speechError}
-            </div>
-          ) : null}
-        </section>
-
-        <section className="rounded-2xl border border-slate-800 bg-slate-900/70 p-6 shadow-xl">
-          <h2 className="text-lg font-semibold text-white">Record Spoken Answer</h2>
-          <p className="mt-2 text-sm text-slate-300">
-            Record your response using the microphone, then submit it for transcription.
-          </p>
-
-          <div className="mt-4 flex flex-wrap gap-3">
-            <button
-              type="button"
-              onClick={() => {
-                void handleStartRecording();
-              }}
-              disabled={isRecording || isUploading || isQuitting}
-              className="rounded-xl bg-white px-4 py-2.5 text-sm font-medium text-slate-950 transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {isRecording ? "Recording..." : recordedBlob ? "Re-record" : "Start Recording"}
-            </button>
-            <button
-              type="button"
-              onClick={handleStopRecording}
-              disabled={!isRecording || isQuitting}
-              className="rounded-xl border border-slate-700 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              Stop Recording
-            </button>
-            <button
-              type="button"
-              onClick={handleDiscardRecording}
-              disabled={isQuitting || isRecording || (!recordedBlob && !lastTranscript)}
-              className="rounded-xl border border-red-800 px-4 py-2.5 text-sm font-medium text-red-200 transition hover:bg-red-950/40 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              Discard
-            </button>
-          </div>
-
-          {isRecording ? (
-            <p className="mt-3 text-sm text-amber-300">
-              Recording in progress: <span className="font-mono">{formatDuration(recordingSeconds)}</span>
-            </p>
-          ) : null}
-
-          {recordingPreviewUrl ? (
-            <div className="mt-4">
-              <p className="mb-2 text-sm text-slate-300">Recorded preview</p>
-              <audio controls src={recordingPreviewUrl} className="w-full" />
-            </div>
-          ) : null}
-
-          {recordingError ? (
-            <div className="mt-4 rounded-xl border border-red-900 bg-red-950/40 px-4 py-3 text-sm text-red-300">
-              {recordingError}
-            </div>
-          ) : null}
-
-          {submitError ? (
-            <div className="mt-4 rounded-xl border border-red-900 bg-red-950/40 px-4 py-3 text-sm text-red-300">
-              {submitError}
-            </div>
-          ) : null}
-
-          {lastTranscript ? (
-            <div className="mt-4 rounded-xl border border-emerald-900 bg-emerald-950/30 px-4 py-3 text-sm text-emerald-100">
-              <p className="font-medium">Answer saved and transcribed.</p>
-              <p className="mt-1 text-emerald-200">{lastTranscript}</p>
-            </div>
-          ) : null}
-
-          <div className="mt-5">
-            <button
-              type="button"
-              onClick={() => {
-                void handleSubmitAnswer();
-              }}
-              disabled={!recordedBlob || isRecording || isUploading || isQuitting}
-              className="rounded-xl bg-white px-5 py-2.5 text-sm font-medium text-slate-950 transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {isUploading ? "Uploading & Transcribing..." : "Submit Spoken Answer"}
-            </button>
-          </div>
-        </section>
+        <QuestionPlayer
+          category={formatCategory(currentQuestion.category)}
+          questionText={currentQuestion.question_text}
+          rationale={currentQuestion.rationale}
+          isSpeaking={isSpeaking}
+          onToggleSpeech={() => {
+            if (isSpeaking) {
+              stopSpeaking();
+            } else {
+              void handlePlayQuestion();
+            }
+          }}
+          speechError={speechError}
+          isRecording={isRecording}
+          recordingSeconds={recordingSeconds}
+          isUploading={isUploading}
+          isQuitting={isQuitting}
+          hasRecording={Boolean(recordedBlob)}
+          recordingPreviewUrl={recordingPreviewUrl}
+          recordingError={recordingError}
+          submitError={submitError}
+          lastTranscript={lastTranscript}
+          onStartRecording={() => {
+            void handleStartRecording();
+          }}
+          onStopRecording={handleStopRecording}
+          onDiscardRecording={handleDiscardRecording}
+          onSubmitAnswer={() => {
+            void handleSubmitAnswer();
+          }}
+        />
       </div>
+
+      {isFinishingFlow ? (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-foreground/20 px-6">
+          <LongRunningLoader
+            title="Evaluating your answers..."
+            phrases={["Reviewing your answers...", "Scoring relevance and depth...", "Generating feedback..."]}
+            className="w-full max-w-lg"
+          />
+        </div>
+      ) : null}
+
+      <ConfirmDialog
+        open={showQuitConfirm}
+        title="End this interview?"
+        description="Submitted answers will be evaluated. Unsaved recording for this question will be discarded."
+        confirmLabel="End Interview"
+        cancelLabel="Cancel"
+        onCancel={() => setShowQuitConfirm(false)}
+        onConfirm={() => {
+          setShowQuitConfirm(false);
+          void handleQuitInterview();
+        }}
+        isConfirming={isQuitting}
+      />
     </main>
   );
 }

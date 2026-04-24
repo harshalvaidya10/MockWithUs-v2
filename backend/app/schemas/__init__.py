@@ -8,6 +8,17 @@ from app.schemas.auth import (
     TokenResponse,
     UserOut,
 )
+from app.schemas.coding import (
+    CodeEvaluationOut,
+    CodeRunRequest,
+    CodeRunResponse,
+    CodeSubmitResponse,
+    CodingProblemOut,
+    CodingSessionStartRequest,
+    CodingSessionStartResponse,
+    TestCaseOut,
+    TestResultOut,
+)
 from app.schemas.evaluation import EvalOut, FeedbackOut
 from app.schemas.interview import (
     QuestionOut,
@@ -22,6 +33,13 @@ from app.schemas.resume import ResumeOut, ResumeUploadResponse
 
 __all__ = [
     "AudioAnswerOut",
+    "CodeEvaluationOut",
+    "CodeRunRequest",
+    "CodeRunResponse",
+    "CodeSubmitResponse",
+    "CodingProblemOut",
+    "CodingSessionStartRequest",
+    "CodingSessionStartResponse",
     "EvalOut",
     "FeedbackOut",
     "CurrentUserResponse",
@@ -39,6 +57,8 @@ __all__ = [
     "SessionStartQuestionOut",
     "SignupRequest",
     "SignupResponse",
+    "TestCaseOut",
+    "TestResultOut",
     "Token",
     "TokenResponse",
     "UserOut",

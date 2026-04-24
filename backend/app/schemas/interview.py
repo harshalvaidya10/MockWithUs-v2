@@ -39,6 +39,7 @@ class SessionOut(BaseModel):
     match_score: float | None
     match_summary: str | None
     status: str
+    session_type: str
     created_at: datetime
     completed_at: datetime | None
 
@@ -71,6 +72,7 @@ class SessionHistoryItemOut(BaseModel):
     resume_id: UUID | None
     job_id: UUID | None
     status: str
+    session_type: str
     match_score: float | None
     match_summary: str | None
     question_count: int = Field(ge=0)
@@ -78,6 +80,11 @@ class SessionHistoryItemOut(BaseModel):
     is_complete: bool
     created_at: datetime
     completed_at: datetime | None
+    problem_title: str | None = None
+    difficulty: str | None = None
+    tests_passed: int | None = None
+    tests_total: int | None = None
+    overall_score: float | None = None
 
 
 class SessionHistoryListOut(BaseModel):

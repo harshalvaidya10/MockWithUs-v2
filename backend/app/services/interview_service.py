@@ -12,10 +12,16 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import NotFoundError
 from app.models.answer import Answer
+from app.models.code_evaluation import CodeEvaluation
+from app.models.code_submission import CodeSubmission
+from app.models.coding_problem import CodingProblem
+from app.models.evaluation import Evaluation
 from app.models.interview import InterviewSession
 from app.models.job import JobDescription
 from app.models.question import Question
 from app.models.resume import Resume
+from app.models.test_case import TestCase
+from app.models.test_result import TestResult
 from app.schemas.interview import SessionCreate
 from app.services.answer_service import _schedule_background_evaluation
 from app.services.matcher import parse_embedding_vector, run_match
@@ -39,6 +45,22 @@ class InterviewHistoryItem(TypedDict):
 
 class InterviewHistoryResult(TypedDict):
     sessions: list[InterviewHistoryItem]
+
+
+def _get_interview_session_for_user(
+    *,
+    db: Session,
+    user_id: UUID,
+    session_id: UUID,
+) -> InterviewSession | None:
+    return (
+        db.query(InterviewSession)
+        .filter(
+            InterviewSession.id == session_id,
+            InterviewSession.user_id == user_id,
+        )
+        .first()
+    )
 
 
 def _get_resume_for_user(db: Session, *, resume_id: UUID, user_id: UUID) -> Resume | None:
@@ -70,13 +92,10 @@ def get_interview_session_for_user(
     session_id: UUID,
 ) -> InterviewStartResult:
     """Load an interview session and its questions for the authenticated user."""
-    session = (
-        db.query(InterviewSession)
-        .filter(
-            InterviewSession.id == session_id,
-            InterviewSession.user_id == user_id,
-        )
-        .first()
+    session = _get_interview_session_for_user(
+        db=db,
+        user_id=user_id,
+        session_id=session_id,
     )
     if session is None:
         raise NotFoundError("Interview session not found.")
@@ -98,13 +117,10 @@ def complete_interview_session_for_user(
     session_id: UUID,
 ) -> InterviewSession:
     """Mark an interview session as completed by the owning user."""
-    session = (
-        db.query(InterviewSession)
-        .filter(
-            InterviewSession.id == session_id,
-            InterviewSession.user_id == user_id,
-        )
-        .first()
+    session = _get_interview_session_for_user(
+        db=db,
+        user_id=user_id,
+        session_id=session_id,
     )
     if session is None:
         raise NotFoundError("Interview session not found.")
@@ -142,6 +158,82 @@ def complete_interview_session_for_user(
         )
 
     return session
+
+
+def delete_interview_session_for_user(
+    *,
+    db: Session,
+    user_id: UUID,
+    session_id: UUID,
+) -> None:
+    """Delete one interview/coding session and all dependent records for the owning user."""
+    session = _get_interview_session_for_user(
+        db=db,
+        user_id=user_id,
+        session_id=session_id,
+    )
+    if session is None:
+        raise NotFoundError("Interview session not found.")
+
+    try:
+        coding_problems = (
+            db.query(CodingProblem)
+            .filter(CodingProblem.session_id == session_id)
+            .all()
+        )
+        coding_problem_ids = [problem.id for problem in coding_problems]
+
+        code_submissions = (
+            db.query(CodeSubmission)
+            .filter(CodeSubmission.session_id == session_id)
+            .all()
+        )
+        submission_ids = [submission.id for submission in code_submissions]
+
+        if submission_ids:
+            for submission_id in submission_ids:
+                db.query(TestResult).filter(TestResult.submission_id == submission_id).delete(
+                    synchronize_session=False
+                )
+                db.query(CodeEvaluation).filter(CodeEvaluation.submission_id == submission_id).delete(
+                    synchronize_session=False
+                )
+
+        db.query(CodeEvaluation).filter(CodeEvaluation.session_id == session_id).delete(
+            synchronize_session=False
+        )
+        db.query(CodeSubmission).filter(CodeSubmission.session_id == session_id).delete(
+            synchronize_session=False
+        )
+
+        if coding_problem_ids:
+            for coding_problem_id in coding_problem_ids:
+                db.query(TestCase).filter(TestCase.problem_id == coding_problem_id).delete(
+                    synchronize_session=False
+                )
+
+        db.query(CodingProblem).filter(CodingProblem.session_id == session_id).delete(
+            synchronize_session=False
+        )
+        db.query(Evaluation).filter(Evaluation.session_id == session_id).delete(
+            synchronize_session=False
+        )
+        db.query(Answer).filter(Answer.session_id == session_id).delete(
+            synchronize_session=False
+        )
+        db.query(Question).filter(Question.session_id == session_id).delete(
+            synchronize_session=False
+        )
+        db.delete(session)
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        logger.exception(
+            "Failed to delete interview session %s for user %s",
+            session_id,
+            user_id,
+        )
+        raise RuntimeError("Could not delete interview session.") from exc
 
 
 def list_interview_sessions_for_user(

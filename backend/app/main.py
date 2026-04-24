@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.routers import answers, audio, auth, evaluations, interviews, jobs, resumes
+from app.routers import answers, audio, auth, coding, evaluations, interviews, jobs, resumes
 from app.services.answer_service import (
     configure_background_evaluation_loop,
     shutdown_background_evaluation_scheduler,
@@ -53,6 +53,7 @@ app.include_router(interviews.router)
 app.include_router(answers.router)
 app.include_router(evaluations.router)
 app.include_router(audio.router)
+app.include_router(coding.router)
 
 
 @app.get("/health", tags=["health"])

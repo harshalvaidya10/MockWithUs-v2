@@ -7,7 +7,20 @@ from sqlalchemy import engine_from_config, pool
 
 from app.config import get_settings
 from app.database import Base
-from app.models import answer, evaluation, interview, job, question, resume, user  # noqa: F401
+from app.models import (  # noqa: F401
+    answer,
+    code_evaluation,
+    code_submission,
+    coding_problem,
+    evaluation,
+    interview,
+    job,
+    question,
+    resume,
+    test_case,
+    test_result,
+    user,
+)
 
 
 config = context.config
