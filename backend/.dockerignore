@@ -1,0 +1,24 @@
+# Secrets / local env
+.env
+.env.*
+
+# Runtime/generated data
+uploads/
+*.db
+*.sqlite
+*.sqlite3
+
+# Python cache / local envs
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.venv/
+.venv*/
+venv/
+
+# VCS / editor metadata
+.git/
+.gitignore
+.DS_Store

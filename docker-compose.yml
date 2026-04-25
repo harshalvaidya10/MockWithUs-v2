@@ -8,7 +8,7 @@ services:
     environment:
       CODE_EXECUTION_MODE: remote
       CODE_EXECUTOR_URL: http://executor:9000
-      CODE_EXECUTOR_SHARED_SECRET: ${CODE_EXECUTOR_SHARED_SECRET:-mockwithus-local-executor-secret}
+      CODE_EXECUTOR_SHARED_SECRET: ${CODE_EXECUTOR_SHARED_SECRET:?CODE_EXECUTOR_SHARED_SECRET is required}
     volumes:
       - ./backend/uploads:/app/uploads
     ports:
@@ -31,7 +31,7 @@ services:
     container_name: mockwithus-executor
     environment:
       CODE_EXECUTION_MODE: local
-      CODE_EXECUTOR_SHARED_SECRET: ${CODE_EXECUTOR_SHARED_SECRET:-mockwithus-local-executor-secret}
+      CODE_EXECUTOR_SHARED_SECRET: ${CODE_EXECUTOR_SHARED_SECRET:?CODE_EXECUTOR_SHARED_SECRET is required}
       CODE_EXEC_MEMORY_LIMIT_BYTES: ${CODE_EXEC_MEMORY_LIMIT_BYTES:-268435456}
       CODE_EXEC_MAX_PROCESSES: ${CODE_EXEC_MAX_PROCESSES:-32}
       CODE_EXEC_MAX_FILE_SIZE_BYTES: ${CODE_EXEC_MAX_FILE_SIZE_BYTES:-33554432}

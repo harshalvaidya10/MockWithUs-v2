@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import urllib.error
 
@@ -83,12 +84,16 @@ def test_execute_code_once_rejects_invalid_java_class_identifier_before_executio
 def test_run_process_uses_sanitized_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     captured_kwargs: dict[str, object] = {}
 
-    def _fake_run(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
-        captured_kwargs.update(kwargs)
-        return subprocess.CompletedProcess(command, 0, stdout="ok", stderr="")
+    class _FakePopen:
+        def __init__(self, command: list[str], **kwargs: object) -> None:
+            captured_kwargs.update(kwargs)
+            self.returncode = 0
+
+        def communicate(self, input: str | None = None, timeout: int | None = None) -> tuple[str, str]:
+            return ("ok", "")
 
     monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "should-not-leak")
-    monkeypatch.setattr(code_executor.subprocess, "run", _fake_run)
+    monkeypatch.setattr(code_executor.subprocess, "Popen", _FakePopen)
 
     result = code_executor._run_process(command=["python3", "-V"], stdin_payload="", timeout_seconds=1)
     assert result["status"] == STATUS_ACCEPTED
@@ -107,12 +112,56 @@ def test_run_process_returns_runtime_error_for_subprocess_setup_failures(
     def _raise_setup_error(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[str]:
         raise subprocess.SubprocessError("sandbox setup failed")
 
-    monkeypatch.setattr(code_executor.subprocess, "run", _raise_setup_error)
+    monkeypatch.setattr(code_executor.subprocess, "Popen", _raise_setup_error)
 
     result = code_executor._run_process(command=["python3", "-V"], stdin_payload="", timeout_seconds=1)
     assert result["status"] == STATUS_RUNTIME_ERROR
     assert result["error_output"] is not None
     assert "sandbox setup failed" in result["error_output"].lower()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="process-group timeout cleanup is POSIX-specific")
+def test_run_process_timeout_kills_process_group(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, object] = {}
+
+    class _TimeoutPopen:
+        def __init__(self, command: list[str], **_kwargs: object) -> None:
+            self.pid = 4321
+            self.returncode = None
+            self._timed_out = False
+
+        def communicate(self, input: str | None = None, timeout: int | None = None) -> tuple[str, str]:
+            if not self._timed_out:
+                self._timed_out = True
+                raise subprocess.TimeoutExpired(
+                    cmd=["python3", "-c", "while True: pass"],
+                    timeout=timeout or 1,
+                    output="partial-out",
+                    stderr="partial-err",
+                )
+            self.returncode = -9
+            return ("partial-out", "partial-err")
+
+    def _fake_getpgid(pid: int) -> int:
+        seen["pid"] = pid
+        return 9876
+
+    def _fake_killpg(pgid: int, sig: int) -> None:
+        seen["killpg"] = (pgid, sig)
+
+    monkeypatch.setattr(code_executor.subprocess, "Popen", _TimeoutPopen)
+    monkeypatch.setattr(code_executor.os, "getpgid", _fake_getpgid)
+    monkeypatch.setattr(code_executor.os, "killpg", _fake_killpg)
+
+    result = code_executor._run_process(command=["python3", "-c", "while True: pass"], stdin_payload="", timeout_seconds=1)
+
+    assert result["status"] == code_executor.STATUS_TIME_LIMIT
+    assert result["actual_output"] == "partial-out"
+    assert result["error_output"] == "partial-err"
+    assert seen["pid"] == 4321
+    assert seen["killpg"] == (9876, code_executor.signal.SIGKILL)
 
 
 def test_execute_code_once_uses_remote_executor_when_configured(

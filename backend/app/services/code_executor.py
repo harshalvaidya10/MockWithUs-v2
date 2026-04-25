@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import shutil
+import signal
 import subprocess
 import time
 import urllib.error
@@ -789,19 +790,20 @@ def _run_process(
     cwd: Path | None = None,
 ) -> RawExecutionResult:
     started_at = time.perf_counter()
+    process: subprocess.Popen[str] | None = None
     try:
-        completed = subprocess.run(
+        process = subprocess.Popen(
             command,
-            input=stdin_payload,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            capture_output=True,
-            timeout=timeout_seconds,
             cwd=str(cwd) if cwd is not None else None,
             env=_build_subprocess_env(),
             preexec_fn=_build_preexec_fn(timeout_seconds=timeout_seconds),
             start_new_session=True,
-            check=False,
         )
+        stdout_text, stderr_text = process.communicate(input=stdin_payload, timeout=timeout_seconds)
     except FileNotFoundError as exc:
         runtime_name = command[0]
         return RawExecutionResult(
@@ -811,11 +813,31 @@ def _run_process(
             status=STATUS_RUNTIME_ERROR,
         )
     except subprocess.TimeoutExpired as exc:
+        if process is not None:
+            if os.name == "posix":
+                try:
+                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                except OSError:
+                    pass
+            else:
+                try:
+                    process.kill()
+                except OSError:
+                    pass
+            try:
+                timeout_stdout, timeout_stderr = process.communicate(timeout=1)
+            except (OSError, subprocess.SubprocessError):
+                timeout_stdout = exc.stdout
+                timeout_stderr = exc.stderr
+        else:
+            timeout_stdout = exc.stdout
+            timeout_stderr = exc.stderr
+
         elapsed_ms = int((time.perf_counter() - started_at) * 1000)
         return RawExecutionResult(
-            actual_output=(exc.stdout or None),
+            actual_output=(timeout_stdout or None),
             runtime_ms=elapsed_ms,
-            error_output=(exc.stderr or f"Execution exceeded {timeout_seconds} seconds."),
+            error_output=(timeout_stderr or f"Execution exceeded {timeout_seconds} seconds."),
             status=STATUS_TIME_LIMIT,
         )
     except (OSError, subprocess.SubprocessError) as exc:
@@ -828,17 +850,17 @@ def _run_process(
         )
 
     elapsed_ms = int((time.perf_counter() - started_at) * 1000)
-    if completed.returncode != 0:
+    if process.returncode != 0:
         return RawExecutionResult(
-            actual_output=completed.stdout or None,
+            actual_output=stdout_text or None,
             runtime_ms=elapsed_ms,
-            error_output=completed.stderr or "Execution failed.",
+            error_output=stderr_text or "Execution failed.",
             status=STATUS_RUNTIME_ERROR,
         )
     return RawExecutionResult(
-        actual_output=completed.stdout,
+        actual_output=stdout_text,
         runtime_ms=elapsed_ms,
-        error_output=completed.stderr or None,
+        error_output=stderr_text or None,
         status=STATUS_ACCEPTED,
     )
 

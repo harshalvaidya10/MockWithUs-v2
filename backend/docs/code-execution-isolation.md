@@ -28,7 +28,8 @@ The default Docker Compose setup applies:
 
 - API container sets `CODE_EXECUTION_MODE=remote` and calls the executor over authenticated HTTP (`X-Executor-Token`).
 - Executor exposes only an internal endpoint (`/execute-once`) and optional health endpoint (`/healthz`).
-- Shared secret is configured via `CODE_EXECUTOR_SHARED_SECRET`.
+- Shared secret is configured via `CODE_EXECUTOR_SHARED_SECRET` and enforced fail-closed by default.
+- `CODE_EXECUTOR_ALLOW_UNAUTHENTICATED=1` can be used only for local troubleshooting when no secret is configured.
 
 ## Production hardening notes
 

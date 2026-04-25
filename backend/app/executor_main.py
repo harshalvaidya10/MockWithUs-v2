@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import os
 from typing import Any
 
@@ -29,9 +30,16 @@ class ExecuteOnceRequest(BaseModel):
 
 def _validate_executor_token(header_token: str | None) -> None:
     expected = os.getenv("CODE_EXECUTOR_SHARED_SECRET", "").strip()
+    allow_unauthenticated = os.getenv("CODE_EXECUTOR_ALLOW_UNAUTHENTICATED", "").strip() == "1"
+
+    if not expected and not allow_unauthenticated:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized executor request.")
+
     if not expected:
         return
-    if header_token != expected:
+
+    provided_token = (header_token or "").strip()
+    if not hmac.compare_digest(provided_token, expected):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized executor request.")
 
 
