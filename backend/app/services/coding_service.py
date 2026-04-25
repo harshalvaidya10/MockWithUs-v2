@@ -272,6 +272,8 @@ async def run_coding_submission(
         language_signature=language_signature,
     )
 
+    # Persist submission + test results first so evaluator latency/failures never
+    # hold this transaction open or roll back computed execution results.
     try:
         submission = CodeSubmission(
             session_id=session.id,
@@ -283,52 +285,22 @@ async def run_coding_submission(
         db.add(submission)
         db.flush()
 
-        persisted_results: list[TestResult] = []
         for result in execution_results:
-            persisted_row = TestResult(
-                submission_id=submission.id,
-                test_case_id=result["test_case_id"],
-                passed=bool(result["passed"]),
-                actual_output=result["actual_output"],
-                expected_output=result["expected_output"],
-                runtime_ms=result["runtime_ms"],
-                error_output=result["error_output"],
-                status=str(result["status"]),
+            db.add(
+                TestResult(
+                    submission_id=submission.id,
+                    test_case_id=result["test_case_id"],
+                    passed=bool(result["passed"]),
+                    actual_output=result["actual_output"],
+                    expected_output=result["expected_output"],
+                    runtime_ms=result["runtime_ms"],
+                    error_output=result["error_output"],
+                    status=str(result["status"]),
+                )
             )
-            db.add(persisted_row)
-            persisted_results.append(persisted_row)
-
-        if submission_type == "submit":
-            evaluation_payload = await evaluate_code_submission(
-                problem_title=problem.title,
-                problem_description=problem.description,
-                source_code=source_code,
-                language=normalized_language,
-                test_results=execution_results,
-                reference_solution=problem.reference_solution,
-            )
-            evaluation = CodeEvaluation(
-                submission_id=submission.id,
-                session_id=session.id,
-                tests_passed=evaluation_payload["tests_passed"],
-                tests_total=evaluation_payload["tests_total"],
-                pass_rate=evaluation_payload["pass_rate"],
-                correctness_score=evaluation_payload["correctness_score"],
-                efficiency_score=evaluation_payload["efficiency_score"],
-                code_quality_score=evaluation_payload["code_quality_score"],
-                problem_solving_score=evaluation_payload["problem_solving_score"],
-                overall_score=evaluation_payload["overall_score"],
-                feedback_text=evaluation_payload["feedback_text"],
-                strengths=evaluation_payload["strengths"],
-                improvements=evaluation_payload["improvements"],
-                expected_solution=evaluation_payload["expected_solution"],
-                complexity_analysis=evaluation_payload["complexity_analysis"],
-            )
-            db.add(evaluation)
-            session.status = "completed"
-            session.completed_at = datetime.now(timezone.utc)
 
         db.commit()
+        db.refresh(submission)
     except Exception as exc:
         db.rollback()
         logger.exception(
@@ -349,13 +321,58 @@ async def run_coding_submission(
     if submission_type != "submit":
         return CodingRunResult(submission=submission, results=submission_results)
 
-    evaluation_row = (
-        db.query(CodeEvaluation)
-        .filter(CodeEvaluation.submission_id == submission.id)
-        .first()
-    )
-    if evaluation_row is None:
-        raise RuntimeError("Coding evaluation was not created for the submitted solution.")
+    try:
+        evaluation_payload = await evaluate_code_submission(
+            problem_title=problem.title,
+            problem_description=problem.description,
+            source_code=source_code,
+            language=normalized_language,
+            test_results=execution_results,
+            reference_solution=problem.reference_solution,
+        )
+    except Exception as exc:
+        logger.exception(
+            "Failed to evaluate coding submission %s for session %s and user %s. "
+            "Submission and test results remain persisted.",
+            submission.id,
+            session_id,
+            user_id,
+        )
+        raise RuntimeError("Could not evaluate coding submission.") from exc
+
+    try:
+        evaluation_row = CodeEvaluation(
+            submission_id=submission.id,
+            session_id=session.id,
+            tests_passed=evaluation_payload["tests_passed"],
+            tests_total=evaluation_payload["tests_total"],
+            pass_rate=evaluation_payload["pass_rate"],
+            correctness_score=evaluation_payload["correctness_score"],
+            efficiency_score=evaluation_payload["efficiency_score"],
+            code_quality_score=evaluation_payload["code_quality_score"],
+            problem_solving_score=evaluation_payload["problem_solving_score"],
+            overall_score=evaluation_payload["overall_score"],
+            feedback_text=evaluation_payload["feedback_text"],
+            strengths=evaluation_payload["strengths"],
+            improvements=evaluation_payload["improvements"],
+            expected_solution=evaluation_payload["expected_solution"],
+            complexity_analysis=evaluation_payload["complexity_analysis"],
+        )
+        db.add(evaluation_row)
+        session.status = "completed"
+        session.completed_at = datetime.now(timezone.utc)
+        db.commit()
+        db.refresh(evaluation_row)
+    except Exception as exc:
+        db.rollback()
+        logger.exception(
+            "Failed to persist coding evaluation for submission %s (session %s, user %s).",
+            submission.id,
+            session_id,
+            user_id,
+        )
+        raise RuntimeError("Could not finalize coding submission.") from exc
+
     return CodingSubmitResult(
         submission=submission,
         results=submission_results,

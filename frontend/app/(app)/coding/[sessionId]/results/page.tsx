@@ -22,16 +22,23 @@ function getApiErrorMessage(error: unknown, fallback: string): string {
   return fallback;
 }
 
-function scoreColorClass(score: number): string {
+function scoreColorClass(score: number | null | undefined): string {
+  if (score === null || score === undefined) return "text-foreground-muted";
   if (score >= 8) return "text-success";
   if (score >= 6) return "text-warning";
   return "text-danger";
 }
 
-function scoreBarClass(score: number): string {
+function scoreBarClass(score: number | null | undefined): string {
+  if (score === null || score === undefined) return "bg-surface-hover";
   if (score >= 8) return "bg-success";
   if (score >= 6) return "bg-warning";
   return "bg-danger";
+}
+
+function formatScoreValue(score: number | null | undefined): string {
+  if (score === null || score === undefined || Number.isNaN(score)) return "-";
+  return score.toFixed(1);
 }
 
 function statusBadgeClass(status: string): string {
@@ -243,7 +250,7 @@ export default function CodingResultsPage(): JSX.Element {
           <p className="text-xs uppercase tracking-wide text-foreground-subtle">Coding round results</p>
           <div className="mt-3 flex flex-wrap items-end justify-between gap-4">
             <div>
-              <p className="text-4xl font-bold tabular-nums text-foreground">{evaluation.overall_score.toFixed(1)} / 10</p>
+              <p className="text-4xl font-bold tabular-nums text-foreground">{formatScoreValue(evaluation.overall_score)} / 10</p>
               <p className="mt-1 text-sm text-foreground-muted">
                 {evaluation.tests_passed}/{evaluation.tests_total} test cases passed
               </p>
@@ -265,28 +272,31 @@ export default function CodingResultsPage(): JSX.Element {
               { label: "Efficiency", score: evaluation.efficiency_score, weight: "20%" },
               { label: "Code quality", score: evaluation.code_quality_score, weight: "15%" },
               { label: "Problem solving", score: evaluation.problem_solving_score, weight: "25%" },
-            ].map((item) => (
-              <div key={item.label} className="rounded-xl border border-border bg-surface-hover p-3">
-                <div className="flex items-center justify-between text-sm">
-                  <p className="text-foreground-muted">{item.label}</p>
-                  <p className={`font-semibold ${scoreColorClass(item.score)}`}>{item.score.toFixed(1)}</p>
+            ].map((item) => {
+              const numericScore = item.score ?? 0;
+              return (
+                <div key={item.label} className="rounded-xl border border-border bg-surface-hover p-3">
+                  <div className="flex items-center justify-between text-sm">
+                    <p className="text-foreground-muted">{item.label}</p>
+                    <p className={`font-semibold ${scoreColorClass(item.score)}`}>{formatScoreValue(item.score)}</p>
+                  </div>
+                  <div className="mt-2 h-2 overflow-hidden rounded-full bg-surface">
+                    <div
+                      className={`h-full ${scoreBarClass(item.score)}`}
+                      style={{ width: `${Math.max(0, Math.min(100, numericScore * 10))}%` }}
+                    />
+                  </div>
+                  <p className="mt-1 text-xs text-foreground-muted">Weight: {item.weight}</p>
                 </div>
-                <div className="mt-2 h-2 overflow-hidden rounded-full bg-surface">
-                  <div
-                    className={`h-full ${scoreBarClass(item.score)}`}
-                    style={{ width: `${Math.max(0, Math.min(100, item.score * 10))}%` }}
-                  />
-                </div>
-                <p className="mt-1 text-xs text-foreground-muted">Weight: {item.weight}</p>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </section>
 
         <section className="rounded-xl border border-border bg-surface p-6">
           <h2 className="text-lg font-semibold tracking-tight text-foreground">Feedback</h2>
           <p className="mt-3 rounded-xl border border-border bg-surface-hover p-4 text-sm text-foreground">
-            {evaluation.feedback_text}
+            {evaluation.feedback_text ?? "AI evaluation unavailable. Showing test results only."}
           </p>
 
           <div className="mt-4 grid gap-4 md:grid-cols-2">
@@ -309,7 +319,7 @@ export default function CodingResultsPage(): JSX.Element {
           </div>
 
           <p className="mt-4 rounded-xl border border-border bg-surface-hover p-3 font-mono text-xs text-foreground">
-            {evaluation.complexity_analysis}
+            {evaluation.complexity_analysis ?? "AI complexity analysis unavailable."}
           </p>
         </section>
 
@@ -361,7 +371,7 @@ export default function CodingResultsPage(): JSX.Element {
           <details>
             <summary className="cursor-pointer text-sm font-semibold text-foreground">Show expected solution</summary>
             <pre className="mt-3 overflow-x-auto rounded-xl border border-border bg-surface-hover p-4 text-xs text-foreground">
-              {evaluation.expected_solution}
+              {evaluation.expected_solution ?? "Expected solution unavailable."}
             </pre>
             <p className="mt-2 text-xs text-foreground-muted">
               This is one possible solution. There may be other valid approaches.

@@ -630,9 +630,18 @@ async def generate_validated_test_cases(
             generated_case_pairs.append((fallback_input, run_result["actual_output"]))
 
         cursor = 0
-        while len(generated_case_pairs) < generated_target and fallback_inputs:
+        iterations = 0
+        max_iterations = max(len(fallback_inputs) * 2, generated_target * 3)
+        failed_inputs: set[str] = set()
+        while len(generated_case_pairs) < generated_target and fallback_inputs and iterations < max_iterations:
             fallback_input = fallback_inputs[cursor % len(fallback_inputs)]
             cursor += 1
+            iterations += 1
+
+            canonical_input = _normalize_json_string(_to_json_string(fallback_input))
+            if canonical_input in seen_inputs or canonical_input in failed_inputs:
+                continue
+
             run_result = execute_code_once(
                 language="python",
                 source_code=reference_solution_source,
@@ -640,7 +649,10 @@ async def generate_validated_test_cases(
                 input_data=fallback_input,
             )
             if run_result["status"] != STATUS_ACCEPTED or run_result["actual_output"] is None:
+                failed_inputs.add(canonical_input)
                 continue
+
+            seen_inputs.add(canonical_input)
             generated_case_pairs.append((fallback_input, run_result["actual_output"]))
 
     if len(generated_case_pairs) < generated_target:

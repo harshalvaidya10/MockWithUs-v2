@@ -1,13 +1,27 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import re
 import shutil
 import subprocess
 import time
+import urllib.error
+import urllib.request
 import uuid
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, Callable, TypedDict
+
+try:
+    import pwd
+except ImportError:  # pragma: no cover - non-POSIX fallback
+    pwd = None  # type: ignore[assignment]
+
+try:
+    import resource
+except ImportError:  # pragma: no cover - non-POSIX fallback
+    resource = None  # type: ignore[assignment]
 
 
 EXECUTION_ROOT = Path("/tmp/mockwithus_exec")
@@ -20,6 +34,50 @@ STATUS_TIME_LIMIT = "time_limit"
 STATUS_COMPILATION_ERROR = "compilation_error"
 
 SUPPORTED_LANGUAGES = {"python", "javascript", "java", "cpp"}
+IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+LOGGER = logging.getLogger(__name__)
+
+
+def _read_positive_int_env(variable_name: str, default_value: int) -> int:
+    raw_value = os.getenv(variable_name)
+    if raw_value is None:
+        return default_value
+    try:
+        parsed = int(raw_value)
+    except ValueError:
+        return default_value
+    return parsed if parsed > 0 else default_value
+
+
+def _read_non_negative_int_env(variable_name: str) -> int | None:
+    raw_value = os.getenv(variable_name)
+    if raw_value is None:
+        return None
+    try:
+        parsed = int(raw_value)
+    except ValueError:
+        return None
+    return parsed if parsed >= 0 else None
+
+
+def _execution_mode() -> str:
+    return os.getenv("CODE_EXECUTION_MODE", "local").strip().lower()
+
+
+def _remote_executor_url() -> str:
+    return os.getenv("CODE_EXECUTOR_URL", "http://executor:9000").strip().rstrip("/")
+
+
+def _remote_executor_token() -> str:
+    return os.getenv("CODE_EXECUTOR_SHARED_SECRET", "").strip()
+
+
+EXEC_MEMORY_LIMIT_BYTES = _read_positive_int_env("CODE_EXEC_MEMORY_LIMIT_BYTES", 512 * 1024 * 1024)
+EXEC_MAX_PROCESSES = _read_positive_int_env("CODE_EXEC_MAX_PROCESSES", 64)
+EXEC_MAX_FILE_SIZE_BYTES = _read_positive_int_env("CODE_EXEC_MAX_FILE_SIZE_BYTES", 64 * 1024 * 1024)
+EXEC_MAX_OPEN_FILES = _read_positive_int_env("CODE_EXEC_MAX_OPEN_FILES", 128)
+EXEC_CPU_HARD_LIMIT_BUFFER_SECONDS = _read_positive_int_env("CODE_EXEC_CPU_HARD_LIMIT_BUFFER_SECONDS", 1)
+REMOTE_EXECUTOR_TIMEOUT_BUFFER_SECONDS = _read_positive_int_env("CODE_EXECUTOR_TIMEOUT_BUFFER_SECONDS", 3)
 
 
 class RawExecutionResult(TypedDict):
@@ -37,6 +95,123 @@ class TestExecutionResult(TypedDict):
     runtime_ms: int | None
     error_output: str | None
     status: str
+
+
+def _is_valid_identifier(value: str) -> bool:
+    return isinstance(value, str) and IDENTIFIER_PATTERN.fullmatch(value) is not None
+
+
+def _invalid_identifier_result(*, label: str, value: str) -> RawExecutionResult:
+    return RawExecutionResult(
+        actual_output=None,
+        runtime_ms=None,
+        error_output=(
+            f"Invalid {label} {value!r}. "
+            "Expected identifier matching ^[A-Za-z_][A-Za-z0-9_]*$."
+        ),
+        status=STATUS_RUNTIME_ERROR,
+    )
+
+
+def _sandbox_identity() -> tuple[int, int] | None:
+    if os.name != "posix":
+        return None
+    if os.getuid() != 0:
+        return None
+
+    uid_override = _read_non_negative_int_env("CODE_EXEC_SANDBOX_UID")
+    gid_override = _read_non_negative_int_env("CODE_EXEC_SANDBOX_GID")
+
+    default_uid = 65534
+    default_gid = 65534
+    if pwd is not None:
+        try:
+            nobody_record = pwd.getpwnam("nobody")
+            default_uid = nobody_record.pw_uid
+            default_gid = nobody_record.pw_gid
+        except KeyError:
+            pass
+
+    target_uid = uid_override if uid_override is not None else default_uid
+    target_gid = gid_override if gid_override is not None else default_gid
+    if target_uid == 0 or target_gid == 0:
+        return None
+    return target_uid, target_gid
+
+
+def _build_subprocess_env() -> dict[str, str]:
+    path_value = os.environ.get("PATH", "").strip()
+    if not path_value:
+        path_value = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    return {
+        "PATH": path_value,
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+        "HOME": "/tmp",
+        "TMPDIR": "/tmp",
+        "PYTHONDONTWRITEBYTECODE": "1",
+    }
+
+
+def _prepare_execution_dir_for_sandbox(execution_dir: Path) -> None:
+    if os.name != "posix":
+        return
+    try:
+        execution_dir.chmod(0o700)
+    except OSError:
+        return
+
+    sandbox_identity = _sandbox_identity()
+    if sandbox_identity is None:
+        return
+    try:
+        os.chown(execution_dir, sandbox_identity[0], sandbox_identity[1])
+    except OSError:
+        # Best effort. If ownership cannot be changed, runtime execution will
+        # surface an error through the normal execution path.
+        pass
+
+
+def _build_preexec_fn(*, timeout_seconds: int) -> Callable[[], None] | None:
+    if os.name != "posix" or resource is None:
+        return None
+
+    # Defense-in-depth only: rlimits + privilege drop reduce blast radius but do
+    # not provide full FS/network isolation. Production should still run this
+    # executor inside a stronger sandbox boundary (container/VM/jail).
+    sandbox_identity = _sandbox_identity()
+    cpu_soft_limit = max(1, int(timeout_seconds))
+    cpu_hard_limit = max(cpu_soft_limit, cpu_soft_limit + EXEC_CPU_HARD_LIMIT_BUFFER_SECONDS)
+
+    def _set_limit(limit_name: int, soft_limit: int, hard_limit: int) -> None:
+        try:
+            resource.setrlimit(limit_name, (soft_limit, hard_limit))
+        except (ValueError, OSError):
+            pass
+
+    def _configure_child_process() -> None:
+        os.umask(0o077)
+
+        if sandbox_identity is not None and os.getuid() == 0:
+            sandbox_uid, sandbox_gid = sandbox_identity
+            try:
+                os.setgroups([])
+            except OSError:
+                pass
+            os.setgid(sandbox_gid)
+            os.setuid(sandbox_uid)
+
+        _set_limit(resource.RLIMIT_AS, EXEC_MEMORY_LIMIT_BYTES, EXEC_MEMORY_LIMIT_BYTES)
+        _set_limit(resource.RLIMIT_CPU, cpu_soft_limit, cpu_hard_limit)
+        _set_limit(resource.RLIMIT_FSIZE, EXEC_MAX_FILE_SIZE_BYTES, EXEC_MAX_FILE_SIZE_BYTES)
+        _set_limit(resource.RLIMIT_CORE, 0, 0)
+
+        if hasattr(resource, "RLIMIT_NPROC"):
+            _set_limit(resource.RLIMIT_NPROC, EXEC_MAX_PROCESSES, EXEC_MAX_PROCESSES)
+        if hasattr(resource, "RLIMIT_NOFILE"):
+            _set_limit(resource.RLIMIT_NOFILE, EXEC_MAX_OPEN_FILES, EXEC_MAX_OPEN_FILES)
+
+    return _configure_child_process
 
 
 def _ensure_execution_root() -> None:
@@ -622,6 +797,9 @@ def _run_process(
             capture_output=True,
             timeout=timeout_seconds,
             cwd=str(cwd) if cwd is not None else None,
+            env=_build_subprocess_env(),
+            preexec_fn=_build_preexec_fn(timeout_seconds=timeout_seconds),
+            start_new_session=True,
             check=False,
         )
     except FileNotFoundError as exc:
@@ -640,6 +818,14 @@ def _run_process(
             error_output=(exc.stderr or f"Execution exceeded {timeout_seconds} seconds."),
             status=STATUS_TIME_LIMIT,
         )
+    except (OSError, subprocess.SubprocessError) as exc:
+        elapsed_ms = int((time.perf_counter() - started_at) * 1000)
+        return RawExecutionResult(
+            actual_output=None,
+            runtime_ms=elapsed_ms,
+            error_output=f"Execution sandbox setup failed: {exc}",
+            status=STATUS_RUNTIME_ERROR,
+        )
 
     elapsed_ms = int((time.perf_counter() - started_at) * 1000)
     if completed.returncode != 0:
@@ -657,6 +843,108 @@ def _run_process(
     )
 
 
+def _coerce_remote_execution_result(payload: Any) -> RawExecutionResult:
+    if not isinstance(payload, dict):
+        return RawExecutionResult(
+            actual_output=None,
+            runtime_ms=None,
+            error_output="Remote executor returned malformed payload.",
+            status=STATUS_RUNTIME_ERROR,
+        )
+
+    actual_output = payload.get("actual_output")
+    runtime_ms = payload.get("runtime_ms")
+    error_output = payload.get("error_output")
+    status = str(payload.get("status") or STATUS_RUNTIME_ERROR)
+
+    if actual_output is not None and not isinstance(actual_output, str):
+        actual_output = _as_json_text(actual_output)
+    if error_output is not None and not isinstance(error_output, str):
+        error_output = str(error_output)
+    if not isinstance(runtime_ms, int):
+        runtime_ms = None
+
+    return RawExecutionResult(
+        actual_output=actual_output,
+        runtime_ms=runtime_ms,
+        error_output=error_output,
+        status=status,
+    )
+
+
+def _execute_code_once_remote(
+    *,
+    language: str,
+    source_code: str,
+    function_name: str,
+    input_data: Any,
+    language_signature: dict[str, Any] | None,
+    timeout_seconds: int,
+) -> RawExecutionResult:
+    base_url = _remote_executor_url()
+    if not base_url:
+        return RawExecutionResult(
+            actual_output=None,
+            runtime_ms=None,
+            error_output="Remote executor URL is not configured.",
+            status=STATUS_RUNTIME_ERROR,
+        )
+
+    request_payload = json.dumps(
+        {
+            "language": language,
+            "source_code": source_code,
+            "function_name": function_name,
+            "input_data": input_data,
+            "language_signature": language_signature,
+            "timeout_seconds": timeout_seconds,
+        }
+    ).encode("utf-8")
+
+    request_headers = {"Content-Type": "application/json"}
+    shared_secret = _remote_executor_token()
+    if shared_secret:
+        request_headers["X-Executor-Token"] = shared_secret
+
+    request = urllib.request.Request(
+        url=f"{base_url}/execute-once",
+        data=request_payload,
+        headers=request_headers,
+        method="POST",
+    )
+    request_timeout = max(1, int(timeout_seconds) + REMOTE_EXECUTOR_TIMEOUT_BUFFER_SECONDS)
+
+    try:
+        with urllib.request.urlopen(request, timeout=request_timeout) as response:
+            raw_response = response.read().decode("utf-8")
+            parsed_response = json.loads(raw_response)
+        return _coerce_remote_execution_result(parsed_response)
+    except urllib.error.HTTPError as exc:
+        response_body = exc.read().decode("utf-8", errors="replace")
+        try:
+            parsed_body = json.loads(response_body)
+        except json.JSONDecodeError:
+            parsed_body = None
+
+        if parsed_body is not None:
+            return _coerce_remote_execution_result(parsed_body)
+
+        return RawExecutionResult(
+            actual_output=None,
+            runtime_ms=None,
+            error_output=f"Remote executor request failed with HTTP {exc.code}.",
+            status=STATUS_RUNTIME_ERROR,
+        )
+    except (OSError, TimeoutError, ValueError, json.JSONDecodeError, urllib.error.URLError) as exc:
+        LOGGER.warning("Remote executor call failed. Falling back to runtime error.", exc_info=True)
+        return RawExecutionResult(
+            actual_output=None,
+            runtime_ms=None,
+            error_output=f"Remote executor unavailable: {exc}",
+            status=STATUS_RUNTIME_ERROR,
+        )
+
+
 def _execute_python_or_javascript(
     *,
     language: str,
@@ -666,9 +954,11 @@ def _execute_python_or_javascript(
     timeout_seconds: int,
 ) -> RawExecutionResult:
     _ensure_execution_root()
-    execution_id = uuid.uuid4().hex
+    execution_dir = EXECUTION_ROOT / uuid.uuid4().hex
+    execution_dir.mkdir(parents=True, exist_ok=True)
+    _prepare_execution_dir_for_sandbox(execution_dir)
     extension = "py" if language == "python" else "js"
-    script_path = EXECUTION_ROOT / f"{execution_id}.{extension}"
+    script_path = execution_dir / f"main.{extension}"
     script_content = (
         _build_python_script(source_code=source_code, function_name=function_name)
         if language == "python"
@@ -690,14 +980,16 @@ def _execute_python_or_javascript(
             command=[runtime_command, str(script_path)],
             stdin_payload=_as_json_text(input_data),
             timeout_seconds=timeout_seconds,
+            cwd=execution_dir,
         )
     finally:
-        script_path.unlink(missing_ok=True)
+        shutil.rmtree(execution_dir, ignore_errors=True)
 
 
 def _execute_java(
     *,
     source_code: str,
+    class_name: str,
     input_data: Any,
     function_name: str,
     params_signature: str,
@@ -714,7 +1006,9 @@ def _execute_java(
     _ensure_execution_root()
     execution_dir = EXECUTION_ROOT / uuid.uuid4().hex
     execution_dir.mkdir(parents=True, exist_ok=True)
-    class_name = _detect_java_class_name(source_code)
+    _prepare_execution_dir_for_sandbox(execution_dir)
+    if not _is_valid_identifier(class_name):
+        return _invalid_identifier_result(label="class name", value=class_name)
     source_path = execution_dir / f"{class_name}.java"
     has_main = _contains_java_main_method(source_code)
     try:
@@ -778,6 +1072,7 @@ def _execute_cpp(
     _ensure_execution_root()
     execution_dir = EXECUTION_ROOT / uuid.uuid4().hex
     execution_dir.mkdir(parents=True, exist_ok=True)
+    _prepare_execution_dir_for_sandbox(execution_dir)
     source_path = execution_dir / "main.cpp"
     binary_path = execution_dir / "main.out"
     try:
@@ -817,6 +1112,50 @@ def _execute_cpp(
         shutil.rmtree(execution_dir, ignore_errors=True)
 
 
+def _execute_code_once_local(
+    *,
+    normalized_language: str,
+    source_code: str,
+    function_name: str,
+    input_data: Any,
+    language_signature: dict[str, Any] | None = None,
+    timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
+) -> RawExecutionResult:
+    if normalized_language in {"python", "javascript"}:
+        return _execute_python_or_javascript(
+            language=normalized_language,
+            source_code=source_code,
+            function_name=function_name,
+            input_data=input_data,
+            timeout_seconds=timeout_seconds,
+        )
+    if normalized_language == "java":
+        params_signature = ""
+        if isinstance(language_signature, dict):
+            params_signature = str(language_signature.get("params", "")).strip()
+        class_name = _detect_java_class_name(source_code)
+        if not _is_valid_identifier(class_name):
+            return _invalid_identifier_result(label="class name", value=class_name)
+        return _execute_java(
+            source_code=source_code,
+            class_name=class_name,
+            input_data=input_data,
+            function_name=function_name,
+            params_signature=params_signature,
+            timeout_seconds=timeout_seconds,
+        )
+    params_signature = ""
+    if isinstance(language_signature, dict):
+        params_signature = str(language_signature.get("params", "")).strip()
+    return _execute_cpp(
+        source_code=source_code,
+        input_data=input_data,
+        function_name=function_name,
+        params_signature=params_signature,
+        timeout_seconds=timeout_seconds,
+    )
+
+
 def execute_code_once(
     *,
     language: str,
@@ -835,34 +1174,25 @@ def execute_code_once(
             error_output=f"Unsupported language '{language}'.",
             status=STATUS_RUNTIME_ERROR,
         )
+    if not _is_valid_identifier(function_name):
+        return _invalid_identifier_result(label="function name", value=function_name)
 
-    if normalized_language in {"python", "javascript"}:
-        return _execute_python_or_javascript(
+    if _execution_mode() == "remote":
+        return _execute_code_once_remote(
             language=normalized_language,
             source_code=source_code,
             function_name=function_name,
             input_data=input_data,
+            language_signature=language_signature,
             timeout_seconds=timeout_seconds,
         )
-    if normalized_language == "java":
-        params_signature = ""
-        if isinstance(language_signature, dict):
-            params_signature = str(language_signature.get("params", "")).strip()
-        return _execute_java(
-            source_code=source_code,
-            input_data=input_data,
-            function_name=function_name,
-            params_signature=params_signature,
-            timeout_seconds=timeout_seconds,
-        )
-    params_signature = ""
-    if isinstance(language_signature, dict):
-        params_signature = str(language_signature.get("params", "")).strip()
-    return _execute_cpp(
+
+    return _execute_code_once_local(
+        normalized_language=normalized_language,
         source_code=source_code,
-        input_data=input_data,
         function_name=function_name,
-        params_signature=params_signature,
+        input_data=input_data,
+        language_signature=language_signature,
         timeout_seconds=timeout_seconds,
     )
 

@@ -186,16 +186,16 @@ export interface CodeEvaluation {
   tests_passed: number;
   tests_total: number;
   pass_rate: number;
-  correctness_score: number;
-  efficiency_score: number;
-  code_quality_score: number;
-  problem_solving_score: number;
-  overall_score: number;
-  feedback_text: string;
+  correctness_score: number | null;
+  efficiency_score: number | null;
+  code_quality_score: number | null;
+  problem_solving_score: number | null;
+  overall_score: number | null;
+  feedback_text: string | null;
   strengths: string[];
   improvements: string[];
-  expected_solution: string;
-  complexity_analysis: string;
+  expected_solution: string | null;
+  complexity_analysis: string | null;
 }
 
 export interface CodingSessionResponse {

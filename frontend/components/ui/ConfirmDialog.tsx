@@ -1,6 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
+import { useEffect, useId, useRef } from "react";
 import type { ReactNode } from "react";
 
 interface ConfirmDialogProps {
@@ -26,6 +27,57 @@ export function ConfirmDialog({
   isConfirming = false,
   icon,
 }: ConfirmDialogProps): JSX.Element {
+  const titleId = useId();
+  const descriptionId = useId();
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    previouslyFocusedRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const dialog = dialogRef.current;
+    if (!dialog) {
+      return;
+    }
+
+    const firstFocusable = dialog.querySelector<HTMLElement>(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    );
+    (firstFocusable ?? dialog).focus();
+  }, [open]);
+
+  useEffect(() => {
+    if (open) {
+      return;
+    }
+    const previouslyFocused = previouslyFocusedRef.current;
+    if (previouslyFocused) {
+      previouslyFocused.focus();
+      previouslyFocusedRef.current = null;
+    }
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onCancel();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open, onCancel]);
+
   return (
     <AnimatePresence>
       {open ? (
@@ -44,16 +96,18 @@ export function ConfirmDialog({
             transition={{ duration: 0.2, ease: "easeOut" }}
             role="alertdialog"
             aria-modal="true"
-            aria-labelledby="confirm-dialog-title"
-            aria-describedby="confirm-dialog-description"
+            aria-labelledby={titleId}
+            aria-describedby={descriptionId}
+            tabIndex={-1}
+            ref={dialogRef}
           >
             <div className="flex items-start gap-3">
               {icon ? <div className="mt-0.5 text-danger">{icon}</div> : null}
               <div>
-                <h2 id="confirm-dialog-title" className="text-lg font-semibold tracking-tight text-foreground">
+                <h2 id={titleId} className="text-lg font-semibold tracking-tight text-foreground">
                   {title}
                 </h2>
-                <p id="confirm-dialog-description" className="mt-1 text-sm leading-relaxed text-foreground-muted">
+                <p id={descriptionId} className="mt-1 text-sm leading-relaxed text-foreground-muted">
                   {description}
                 </p>
               </div>

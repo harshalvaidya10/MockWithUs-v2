@@ -1,8 +1,7 @@
 # MockWithUs Frontend Refactor Notes
 
 ## Scope
-- Refactor completed in `frontend/` only.
-- Backend API contracts were not changed.
+Frontend-focused, with required backend additions/alignments (includes new endpoints, schemas, and migrations where noted).
 
 ## Routes Added
 - `/home`

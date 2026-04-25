@@ -175,6 +175,39 @@ def test_generate_validated_test_cases_derives_diverse_fallback_inputs(
     assert len(unique_hidden_inputs) >= 6
 
 
+def test_generate_validated_test_cases_backfill_skips_duplicate_sample_inputs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_execute_code_once(*, language: str, source_code: str, function_name: str, input_data: object):  # type: ignore[no-untyped-def]
+        payload = input_data[0] if isinstance(input_data, list) and input_data else input_data
+        return {
+            "status": test_case_generator.STATUS_ACCEPTED,
+            "actual_output": json.dumps(payload),
+            "runtime_ms": 5,
+            "error_output": None,
+        }
+
+    monkeypatch.setattr(test_case_generator, "execute_code_once", fake_execute_code_once)
+    monkeypatch.setattr(test_case_generator, "_build_fallback_input_variants", lambda **_: [])
+
+    with pytest.raises(test_case_generator.TestCaseGenerationError, match="enough validated"):
+        asyncio.run(
+            test_case_generator.generate_validated_test_cases(
+                description="Return input value.",
+                reference_solution="def solve(nums):\n    return nums[0]\n",
+                function_signature={"python": {"name": "solve", "params": "nums: list[int]", "return_type": "int"}},
+                constraints="1 <= n <= 10^5",
+                sample_test_cases=[
+                    {"input_data": [[1]], "expected_output": 1},
+                    {"input_data": [[2]], "expected_output": 2},
+                    {"input_data": [[3]], "expected_output": 3},
+                ],
+                edge_case_hints=["small input"],
+                use_llm_for_hidden_inputs=False,
+            )
+        )
+
+
 def test_cross_validation_excludes_disagreements(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
