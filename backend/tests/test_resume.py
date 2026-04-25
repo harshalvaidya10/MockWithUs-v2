@@ -144,6 +144,12 @@ def test_delete_requires_auth() -> None:
     assert response.status_code == 401
 
 
+def test_resume_file_requires_auth() -> None:
+    """Ensure resume file access cannot be used anonymously."""
+    response = client.get(f"/resumes/{uuid4()}/file")
+    assert response.status_code == 401
+
+
 def test_fake_query_matches_condition_fails_closed_for_unsupported_expression() -> None:
     """Unsupported SQLAlchemy-like conditions must not match rows by default."""
 
@@ -572,5 +578,52 @@ def test_delete_resume_success_removes_record_and_file(
 def test_delete_resume_not_found(authenticated_context: dict[str, object]) -> None:
     """Deleting a missing resume should return 404."""
     response = client.delete(f"/resumes/{uuid4()}")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Resume not found."
+
+
+def test_get_resume_file_returns_uploaded_file_for_owner(
+    authenticated_context: dict[str, object],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GET /resumes/{id}/file should stream the owner's uploaded document inline."""
+    monkeypatch.setattr(
+        resumes_router,
+        "parse_resume_file",
+        lambda _: {
+            "parsed_text": (
+                "Jane Doe\n"
+                "jane@example.com | +1 (415) 555-0199\n"
+                "Professional Summary\n"
+                "Software engineer.\n"
+                "Work Experience\n"
+                "Acme Corp (2022 - 2025)\n"
+                "Skills: Python, FastAPI\n"
+                "Education\n"
+                "B.Tech, 2021\n"
+            ),
+            "skills": ["Python", "FastAPI"],
+        },
+    )
+    monkeypatch.setattr(resumes_router, "generate_embedding", lambda _: [0.1, 0.2, 0.3])
+
+    uploaded_bytes = b"%PDF-1.4 mocked content"
+    upload_response = client.post(
+        "/resumes/upload",
+        files={"file": ("resume.pdf", uploaded_bytes, "application/pdf")},
+    )
+    assert upload_response.status_code == 201
+    resume_id = upload_response.json()["id"]
+
+    file_response = client.get(f"/resumes/{resume_id}/file")
+    assert file_response.status_code == 200
+    assert file_response.content == uploaded_bytes
+    assert "application/pdf" in file_response.headers.get("content-type", "")
+    assert "inline" in file_response.headers.get("content-disposition", "").lower()
+
+
+def test_get_resume_file_missing_returns_404(authenticated_context: dict[str, object]) -> None:
+    """GET /resumes/{id}/file should return 404 when resume record does not exist."""
+    response = client.get(f"/resumes/{uuid4()}/file")
     assert response.status_code == 404
     assert response.json()["detail"] == "Resume not found."

@@ -22,17 +22,17 @@ export default function LoginPage(): JSX.Element {
 
   function getSafeRedirectPath(): string {
     if (typeof window === "undefined") {
-      return "/dashboard";
+      return "/home";
     }
 
     const nextPath = new URLSearchParams(window.location.search).get("next");
     if (!nextPath) {
-      return "/dashboard";
+      return "/home";
     }
 
     // Prevent external/open redirects; allow only app-internal absolute paths.
     if (!nextPath.startsWith("/") || nextPath.startsWith("//")) {
-      return "/dashboard";
+      return "/home";
     }
 
     return nextPath;
@@ -67,16 +67,16 @@ export default function LoginPage(): JSX.Element {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center px-6">
-      <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900/70 p-8 shadow-xl">
-        <h1 className="text-2xl font-semibold text-white">Login</h1>
-        <p className="mt-2 text-sm text-slate-300">
+    <main className="flex min-h-screen items-center justify-center bg-background px-6">
+      <div className="w-full max-w-md rounded-xl border border-border bg-surface p-8 shadow-[0_4px_12px_rgba(0,0,0,0.04)]">
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Login</h1>
+        <p className="mt-2 text-sm text-foreground-muted">
           Sign in to continue your interview preparation.
         </p>
 
         <form onSubmit={handleSubmit} className="mt-6 space-y-4">
           <div>
-            <label htmlFor="email" className="mb-2 block text-sm font-medium text-slate-200">
+            <label htmlFor="email" className="mb-1.5 block text-sm font-medium text-foreground">
               Email
             </label>
             <input
@@ -86,13 +86,13 @@ export default function LoginPage(): JSX.Element {
               required
               value={email}
               onChange={(event) => setEmail(event.target.value)}
-              className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition focus:border-slate-500"
+              className="app-input"
               placeholder="you@example.com"
             />
           </div>
 
           <div>
-            <label htmlFor="password" className="mb-2 block text-sm font-medium text-slate-200">
+            <label htmlFor="password" className="mb-1.5 block text-sm font-medium text-foreground">
               Password
             </label>
             <input
@@ -102,13 +102,13 @@ export default function LoginPage(): JSX.Element {
               required
               value={password}
               onChange={(event) => setPassword(event.target.value)}
-              className="w-full rounded-xl border border-slate-700 bg-slate-950 px-4 py-3 text-sm text-white outline-none transition focus:border-slate-500"
+              className="app-input"
               placeholder="Enter your password"
             />
           </div>
 
           {errorMessage ? (
-            <div className="rounded-xl border border-red-900 bg-red-950/40 px-4 py-3 text-sm text-red-300">
+            <div className="rounded-xl border border-danger bg-danger-subtle px-4 py-3 text-sm text-danger">
               {errorMessage}
             </div>
           ) : null}
@@ -116,15 +116,15 @@ export default function LoginPage(): JSX.Element {
           <button
             type="submit"
             disabled={isSubmitting}
-            className="w-full rounded-xl bg-white px-4 py-3 text-sm font-medium text-slate-950 transition hover:bg-slate-200 disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex h-10 w-full items-center justify-center rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors duration-150 hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-60"
           >
             {isSubmitting ? "Logging in..." : "Login"}
           </button>
         </form>
 
-        <p className="mt-6 text-sm text-slate-400">
+        <p className="mt-6 text-sm text-foreground-muted">
           Don&apos;t have an account?{" "}
-          <a href="/signup" className="font-medium text-white underline underline-offset-4">
+          <a href="/signup" className="font-medium text-foreground underline underline-offset-4">
             Sign up
           </a>
         </p>

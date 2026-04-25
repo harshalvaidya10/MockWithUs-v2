@@ -22,5 +22,6 @@ class InterviewSession(Base):
     match_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     match_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="draft", index=True)
+    session_type: Mapped[str] = mapped_column(String(20), nullable=False, default="interview")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 176" role="img" aria-labelledby="title desc">
+  <title id="title">MockWithUs Logo</title>
+  <desc id="desc">MockWithUs wordmark with app icon.</desc>
+  <rect x="0" y="0" width="176" height="176" rx="50" fill="#5E5CE6" />
+  <path
+    d="M45 118 L68 54 L89 99 L110 54 L132 118"
+    fill="none"
+    stroke="#FFFFFF"
+    stroke-width="12"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <circle cx="88" cy="133" r="7" fill="#FFFFFF" />
+  <text
+    x="205"
+    y="116"
+    font-family="Inter, Segoe UI, Arial, sans-serif"
+    font-size="78"
+    font-weight="700"
+    letter-spacing="-1"
+    fill="#0A0A0A"
+  >
+    MockWithUs
+  </text>
+</svg>

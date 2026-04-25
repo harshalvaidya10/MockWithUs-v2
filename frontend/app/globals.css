@@ -3,13 +3,87 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: dark;
+  --background: #fafafa;
+  --surface: #ffffff;
+  --surface-hover: #f5f5f5;
+  --border: #eaeaea;
+  --border-strong: #d4d4d4;
+  --foreground: #0a0a0a;
+  --foreground-muted: #525252;
+  --foreground-subtle: #a3a3a3;
+  --primary: #5e5ce6;
+  --primary-hover: #4f4dd9;
+  --primary-foreground: #ffffff;
+  --primary-subtle: #eef0ff;
+  --success: #10b981;
+  --success-subtle: #ecfdf5;
+  --warning: #f59e0b;
+  --warning-subtle: #fffbeb;
+  --danger: #ef4444;
+  --danger-subtle: #fef2f2;
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 body {
-  @apply bg-background text-foreground antialiased;
+  @apply bg-background text-foreground antialiased font-sans;
+  font-size: 14px;
 }
 
 a {
-  @apply text-accent;
+  @apply text-foreground no-underline;
+}
+
+* {
+  @apply border-border;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 9999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--foreground-subtle);
+}
+
+@layer components {
+  .app-card {
+    @apply rounded-xl border border-border bg-surface p-6;
+  }
+
+  .app-card-muted {
+    @apply rounded-xl border border-border bg-surface-hover p-4;
+  }
+
+  .app-input {
+    @apply h-9 w-full rounded-lg border border-border bg-surface px-3 text-sm text-foreground transition-[border-color,box-shadow] duration-150 outline-none;
+  }
+
+  .app-input:focus {
+    @apply border-primary ring-1 ring-primary;
+  }
+
+  .app-btn-primary {
+    @apply inline-flex h-9 items-center justify-center rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors duration-150 ease-out hover:bg-primary-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .app-btn-secondary {
+    @apply inline-flex h-9 items-center justify-center rounded-lg border border-border bg-surface px-4 text-sm font-medium text-foreground transition-colors duration-150 ease-out hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .app-btn-ghost {
+    @apply inline-flex h-9 items-center justify-center rounded-lg px-3 text-sm font-medium text-foreground transition-colors duration-150 ease-out hover:bg-surface-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50;
+  }
 }

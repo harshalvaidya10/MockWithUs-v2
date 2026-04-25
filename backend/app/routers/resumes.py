@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import mimetypes
 import uuid
 from pathlib import Path
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -23,6 +25,22 @@ router = APIRouter(prefix="/resumes", tags=["resumes"])
 settings = get_settings()
 
 ALLOWED_EXTENSIONS = {".pdf", ".docx"}
+
+
+def _resolve_resume_file_path(stored_filename: str) -> Path:
+    return Path(settings.upload_dir) / stored_filename
+
+
+def _resume_media_type(filename: str, stored_filename: str) -> str:
+    media_type, _ = mimetypes.guess_type(filename)
+    if media_type:
+        return media_type
+
+    fallback_type, _ = mimetypes.guess_type(stored_filename)
+    if fallback_type:
+        return fallback_type
+
+    return "application/octet-stream"
 
 
 @router.post(
@@ -215,7 +233,7 @@ async def delete_resume(
     if resume is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resume not found.")
 
-    stored_file_path = Path(settings.upload_dir) / resume.stored_filename
+    stored_file_path = _resolve_resume_file_path(resume.stored_filename)
 
     try:
         db.delete(resume)
@@ -242,3 +260,36 @@ async def delete_resume(
         )
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/{resume_id}/file")
+async def get_resume_file(
+    resume_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> FileResponse:
+    """Return the raw uploaded resume file for in-app preview/download."""
+    resume = (
+        db.query(Resume)
+        .filter(Resume.id == resume_id, Resume.user_id == current_user.id)
+        .first()
+    )
+    if resume is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Resume not found.")
+
+    stored_file_path = _resolve_resume_file_path(resume.stored_filename)
+    if not stored_file_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Resume file could not be found.",
+        )
+
+    media_type = _resume_media_type(resume.filename, resume.stored_filename)
+    safe_filename = resume.filename.replace('"', "")
+
+    return FileResponse(
+        path=stored_file_path,
+        media_type=media_type,
+        filename=resume.filename,
+        headers={"Content-Disposition": f'inline; filename="{safe_filename}"'},
+    )

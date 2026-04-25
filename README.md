@@ -11,6 +11,10 @@ MockWithUs is a full-stack mock interview platform scaffold built with a FastAPI
 5. Optional DB UI (dev-only): `docker compose --profile devtools up -d adminer` then open `http://localhost:8080`.
 6. Optional frontend E2E: `cd frontend && npm run test:e2e`.
 
+## Security Notes
+
+- Code execution isolation strategy: [`backend/docs/code-execution-isolation.md`](backend/docs/code-execution-isolation.md)
+
 ## Project Structure
 
 Note: This structure documents source files only (generated folders like `frontend/.next/` and `frontend/node_modules/` are intentionally excluded).

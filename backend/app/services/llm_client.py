@@ -143,6 +143,12 @@ def _configured_retry_jitter_seconds() -> float:
         return DEFAULT_429_JITTER_SECONDS
 
 
+def _is_groq_qwen3_model(config: LlmProviderConfig) -> bool:
+    provider = str(config.get("provider", "")).strip().lower()
+    model = str(config.get("model", "")).strip().lower()
+    return provider == "groq" and model.startswith("qwen/qwen3")
+
+
 def _extract_message_content(payload: dict[str, Any]) -> str:
     try:
         message_content = payload["choices"][0]["message"]["content"]
@@ -171,6 +177,7 @@ async def call_llm(
     max_tokens: int | None = None,
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
     response_format: dict[str, Any] | None = None,
+    max_429_retries: int | None = None,
 ) -> str:
     """Call configured provider via OpenAI-compatible chat completions API."""
     primary_config = _resolve_provider_config()
@@ -180,6 +187,7 @@ async def call_llm(
 
     timeout = httpx.Timeout(timeout_seconds, connect=min(10.0, timeout_seconds))
     retry_jitter_seconds = _configured_retry_jitter_seconds()
+    retry_limit = MAX_429_RETRIES if max_429_retries is None else max(0, int(max_429_retries))
 
     async def _call_provider(config: LlmProviderConfig) -> str:
         payload: dict[str, Any] = {
@@ -187,6 +195,12 @@ async def call_llm(
             "messages": messages,
             "temperature": temperature,
         }
+        if _is_groq_qwen3_model(config):
+            # Qwen3 on Groq defaults to raw reasoning content in assistant text
+            # (<think>...), which breaks downstream JSON extraction. Keep final
+            # answer only for this model family.
+            payload["reasoning_format"] = "hidden"
+            payload["reasoning_effort"] = "none"
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
         if response_format is not None:
@@ -211,7 +225,7 @@ async def call_llm(
                 response_format_fallback_used = True
                 continue
 
-            if response.status_code == 429 and retry_count < MAX_429_RETRIES:
+            if response.status_code == 429 and retry_count < retry_limit:
                 retry_count += 1
                 wait_seconds = retry_delay_for_attempt(
                     retry_count,
@@ -224,7 +238,7 @@ async def call_llm(
                     "LLM provider returned 429 (provider=%s, retry %s/%s). Retrying in %.1fs.",
                     config["provider"],
                     retry_count,
-                    MAX_429_RETRIES,
+                    retry_limit,
                     wait_seconds,
                 )
                 await asyncio.sleep(wait_seconds)
